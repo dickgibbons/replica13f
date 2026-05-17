@@ -1,0 +1,20 @@
+# runtime caches (EDGAR, prices, snapshots)
+cache/
+
+# CLI output
+outputs/
+
+# secrets
+.env
+.env.*
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
