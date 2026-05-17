@@ -1,0 +1,15 @@
+[Unit]
+Description=replica13f Streamlit (Hedge Fund Filings)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/dashboard/replica13f
+EnvironmentFile=/root/dashboard/replica13f/.env
+ExecStart=/root/dashboard/replica13f/.venv/bin/streamlit run app.py --server.port=8502 --server.address=0.0.0.0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -81,6 +81,9 @@ python3 run.py --ciks 0001336528,0001061165
 
 # Streamlit UI
 streamlit run app.py
+
+# VPS deploy (hub tile + systemd on :8502)
+# See DEPLOY.md
 ```
 
 Caches live in `cache/` and make reruns fast and resumable. Add or edit funds in
