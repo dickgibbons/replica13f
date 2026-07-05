@@ -146,8 +146,12 @@ def parse_infotable(cik: str, accession: str, filing_date: str,
     if not url:
         return []
     raw = _get(url)
-    raw = raw.replace('xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable"', "")
     root = ET.fromstring(raw)
+    # Filers vary in namespace style (default xmlns, ns1: prefixes, or none).
+    # Strip namespaces from every tag so lookups work for all dialects.
+    for el in root.iter():
+        if "}" in el.tag:
+            el.tag = el.tag.split("}", 1)[1]
     fd = dt.date.fromisoformat(filing_date)
     scale = 1 if fd >= DOLLAR_RULE_DATE else 1000
     rows = []
