@@ -5,8 +5,8 @@ This app runs as **Streamlit on port 8502**. The hub tile on port **5000** links
 | Item | Value |
 |------|--------|
 | VPS IP | `138.197.38.55` (adjust if yours changed) |
-| Hub (Agents) | `http://138.197.38.55:5000/` |
-| This app | `http://138.197.38.55:8502/` |
+| Hub (Agents) | `http://138.197.38.55/` (port 80 via nginx) or `:5000` direct |
+| This app | `http://138.197.38.55/filings/` (port 80) or `:8502` direct |
 | Hub repo on VPS | `/root/dashboard/Agents` |
 | App repo on VPS | `/root/dashboard/replica13f` |
 
@@ -107,7 +107,7 @@ The tile lives in the **Agents** repo (`frontend/index.html`), not in replica13f
 ### 8. On your Mac — commit and push Agents (if not already done)
 
 ```bash
-cd "/Users/dickgibbons/Documents/AI Projects/Agents"
+cd "/Users/dickgibbons/Documents/Documents - Dick’s MacBook Pro/GitHub/Agents"
 git status
 git add frontend/index.html frontend/investing.html
 git commit -m "Add Hedge Fund Filings hub tile (port 8502)"
