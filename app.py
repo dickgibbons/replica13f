@@ -7,6 +7,7 @@ from io import StringIO
 import pandas as pd
 import streamlit as st
 
+import activist
 import classify
 import edgar
 import holdings as holdings_mod
@@ -19,6 +20,7 @@ CACHE = os.path.join(ROOT, "cache")
 LAST_RUN_PATH = os.path.join(CACHE, "last_run.json")
 HOLDINGS_SNAPSHOT_PATH = os.path.join(CACHE, "holdings_snapshot.json")
 MOVES_SNAPSHOT_PATH = os.path.join(CACHE, "moves_snapshot.json")
+ACTIVIST_SNAPSHOT_PATH = os.path.join(CACHE, "activist_snapshot.json")
 
 
 def _fmt_usd(val) -> str:
@@ -99,6 +101,33 @@ def _load_moves_snapshot() -> dict | None:
 def _save_moves_snapshot(snap: dict) -> None:
     st.session_state["moves_snapshot"] = snap
     _save_json(MOVES_SNAPSHOT_PATH, snap)
+
+
+def _load_activist_snapshot() -> dict | None:
+    if "activist_snapshot" in st.session_state:
+        return st.session_state["activist_snapshot"]
+    snap = _load_json(ACTIVIST_SNAPSHOT_PATH)
+    if snap:
+        st.session_state["activist_snapshot"] = snap
+    return snap
+
+
+def _save_activist_snapshot(snap: dict) -> None:
+    st.session_state["activist_snapshot"] = snap
+    _save_json(ACTIVIST_SNAPSHOT_PATH, snap)
+
+
+def _activist_df(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "Filed": r["filed"],
+            "Fund": r["fund"],
+            "Form": r["form"],
+            "Target company": r["subject"],
+            "Filing": r["url"],
+        }
+        for r in rows
+    ])
 
 
 def _rows_to_df(rows: list[dict], years: int) -> pd.DataFrame:
@@ -247,8 +276,8 @@ def main():
 
         run_clicked = st.button("Run ranking", type="primary", use_container_width=True)
 
-    tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_detail = st.tabs(
-        ["Top funds", "Universe", "Results", "Holdings", "Moves", "Fund detail"]
+    tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_13d, tab_detail = st.tabs(
+        ["Top funds", "Universe", "Results", "Holdings", "Moves", "13D filings", "Fund detail"]
     )
 
     with tab_top:
@@ -596,6 +625,82 @@ def main():
                         st.caption(s)
         else:
             st.info("Click **Load moves** to compare the last two 13F filings per fund.")
+
+    with tab_13d:
+        st.subheader("13D ownership filings")
+        st.caption(
+            "A 13D is filed within days of a fund taking an activist stake above 5% "
+            "of a company — much fresher than the quarterly 13F. Amendments (13D/A) "
+            "signal the position is changing. 13G is the passive equivalent."
+        )
+
+        c_load, c_13g, c_limit = st.columns([1, 1, 1])
+        with c_load:
+            load_13d = st.button("Load 13D filings", type="primary")
+        with c_13g:
+            include_13g = st.checkbox("Include 13G (passive stakes)", value=False)
+        with c_limit:
+            per_fund_limit = st.number_input(
+                "Max filings per fund", min_value=1, max_value=50, value=10
+            )
+
+        if load_13d:
+            funds = universe.load()
+            if not funds:
+                st.warning("Add funds in the Universe tab first.")
+            else:
+                snap = _load_with_progress(
+                    funds,
+                    lambda f, on_progress: activist.snapshot(
+                        f,
+                        include_13g=include_13g,
+                        per_fund_limit=int(per_fund_limit),
+                        on_progress=on_progress,
+                    ),
+                    "Loading 13D filings",
+                )
+                _save_activist_snapshot(snap)
+
+        asnap = _load_activist_snapshot()
+        if asnap and asnap.get("rows"):
+            fund_names = ["All funds"] + sorted({r["fund"] for r in asnap["rows"]})
+            pick = st.selectbox("Fund filter", fund_names, key="activist_fund_pick")
+            rows = asnap["rows"]
+            if pick != "All funds":
+                rows = [r for r in rows if r["fund"] == pick]
+
+            meta = asnap.get("meta", {})
+            st.caption(
+                f"{len(rows)} filings · newest first · "
+                f"{'13D + 13G' if meta.get('include_13g') else '13D only'} · "
+                f"up to {meta.get('per_fund_limit')} per fund"
+            )
+            df_13d = _activist_df(rows)
+            st.dataframe(
+                df_13d,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Filing": st.column_config.LinkColumn(
+                        "Filing", display_text="open on EDGAR"
+                    ),
+                },
+            )
+            _csv_download("Download CSV", df_13d, "filings_13d.csv", "csv_13d")
+
+            skipped = [
+                f"{f['name']}: {f.get('error')}"
+                for f in asnap.get("funds", {}).values()
+                if f.get("error")
+            ]
+            if skipped:
+                with st.expander("Funds skipped"):
+                    for s in skipped:
+                        st.caption(s)
+        elif asnap:
+            st.info("No 13D filings found for the current universe.")
+        else:
+            st.info("Click **Load 13D filings** to check every fund in the universe.")
 
     with tab_detail:
         funds = universe.load()

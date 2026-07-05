@@ -93,6 +93,65 @@ def search_entities(query: str, limit: int = 10) -> list[dict]:
     return out
 
 
+# Ownership filings: 13D = activist stake >5% (filed within days), 13G = passive.
+# EDGAR renamed the forms from "SC 13D" to "SCHEDULE 13D" in late 2024.
+OWNERSHIP_FORMS = {
+    "13D": ("SC 13D", "SCHEDULE 13D"),
+    "13G": ("SC 13G", "SCHEDULE 13G"),
+}
+SUBJECTS_CACHE = os.path.join(CACHE, "filing_subjects.json")
+
+
+def list_ownership_filings(cik: str, kinds: tuple[str, ...] = ("13D",)):
+    """All 13D/13G filings BY this manager (incl. amendments).
+
+    Returns [{form, kind, filing_date, accession}] newest first."""
+    prefixes = tuple(p for k in kinds for p in OWNERSHIP_FORMS[k])
+    cik = str(cik).zfill(10)
+    data = _get(f"https://data.sec.gov/submissions/CIK{cik}.json", as_json=True)
+    blocks = [data["filings"]["recent"]]
+    for extra in data["filings"].get("files", []):
+        blocks.append(_get(f"https://data.sec.gov/submissions/{extra['name']}", as_json=True))
+    out = []
+    for b in blocks:
+        for form, fdate, acc in zip(b["form"], b["filingDate"], b["accessionNumber"]):
+            fu = form.upper()
+            if fu.startswith(prefixes):
+                kind = "13D" if "13D" in fu else "13G"
+                out.append({
+                    "form": form, "kind": kind,
+                    "filing_date": fdate, "accession": acc,
+                })
+    out.sort(key=lambda f: f["filing_date"], reverse=True)
+    return out
+
+
+def filing_index_url(cik: str, accession: str) -> str:
+    acc_nodash = accession.replace("-", "")
+    return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_nodash}/{accession}-index.htm"
+
+
+def filing_subject(cik: str, accession: str) -> str | None:
+    """Target company named on a 13D/13G filing (cached on disk)."""
+    os.makedirs(CACHE, exist_ok=True)
+    subjects = {}
+    if os.path.exists(SUBJECTS_CACHE):
+        with open(SUBJECTS_CACHE) as f:
+            subjects = json.load(f)
+    if accession in subjects:
+        return subjects[accession]
+    html = _get(filing_index_url(cik, accession))
+    subject = None
+    for span in re.findall(r'<span class="companyName">([^<]*)', html):
+        if "(Subject)" in span:
+            subject = span.split("(Subject)")[0].strip()
+            break
+    subjects[accession] = subject
+    with open(SUBJECTS_CACHE, "w") as f:
+        json.dump(subjects, f)
+    return subject
+
+
 def list_13f_filings(cik: str):
     """Return [{period, filing_date, accession, form}] for all 13F-HR / 13F-HR/A."""
     cik = str(cik).zfill(10)

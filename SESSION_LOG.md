@@ -1,5 +1,17 @@
 # SESSION_LOG
 
+## 2026-07-05 — 13D filings tab
+
+- New tab: 13D ownership filings per universe fund (activist >5% stakes,
+  filed within days — fresher signal than quarterly 13Fs)
+- `edgar.list_ownership_filings` handles both form eras ("SC 13D" pre-2024,
+  "SCHEDULE 13D" after); `edgar.filing_subject` scrapes the target company
+  from the filing index page, cached in cache/filing_subjects.json
+- `activist.py` builds the snapshot; UI has 13G toggle, per-fund limit,
+  fund filter, EDGAR links, CSV export
+- Verified in browser: 46 filings for the 8-fund universe (Viking/Standard
+  BioTools 13D 2026-06-12, Pershing/Howard Hughes 13D/A, etc.)
+
 ## 2026-07-05 — Deployed to VPS + namespace parsing fix
 
 - Deployed Top funds leaderboard to VPS (git pull + service restart)
