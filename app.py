@@ -10,6 +10,7 @@ import streamlit as st
 import classify
 import edgar
 import holdings as holdings_mod
+import leaderboard
 import runner
 import universe
 
@@ -246,9 +247,69 @@ def main():
 
         run_clicked = st.button("Run ranking", type="primary", use_container_width=True)
 
-    tab_univ, tab_results, tab_holdings, tab_moves, tab_detail = st.tabs(
-        ["Universe", "Results", "Holdings", "Moves", "Fund detail"]
+    tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_detail = st.tabs(
+        ["Top funds", "Universe", "Results", "Holdings", "Moves", "Fund detail"]
     )
+
+    with tab_top:
+        st.subheader("Top hedge funds by annualized return")
+        st.caption(
+            f"Approximate net returns compiled from public reporting, as of {leaderboard.AS_OF}. "
+            "Hedge funds do not publish audited public returns, so treat these as directional — "
+            "edit `data/top_funds.json` to update numbers or change the list. "
+            "**Select rows (checkboxes on the left) to add funds to your universe.**"
+        )
+
+        board = leaderboard.load()
+
+        # Selecting a row reruns the script; process the selection BEFORE
+        # drawing the table so the "In universe" checkmark is current.
+        state = st.session_state.get("top_funds_table")
+        selected_rows = state.get("selection", {}).get("rows", []) if state else []
+        universe_ciks = {f["cik"] for f in universe.load()}
+        added = []
+        for i in selected_rows:
+            row = board[i]
+            if row["cik"] not in universe_ciks:
+                universe.add({
+                    "name": row["name"],
+                    "cik": row["cik"],
+                    "ww_ref_5yr": row.get("ret_5yr"),
+                })
+                universe_ciks.add(row["cik"])
+                added.append(row["name"])
+
+        df_top = pd.DataFrame([
+            {
+                "Fund": r["name"],
+                "1yr Ann %": r.get("ret_1yr"),
+                "3yr Ann %": r.get("ret_3yr"),
+                "5yr Ann %": r.get("ret_5yr"),
+                "10yr Ann %": r.get("ret_10yr"),
+                "In universe": "✓" if r["cik"] in universe_ciks else "",
+                "CIK": r["cik"],
+            }
+            for r in board
+        ])
+        st.dataframe(
+            df_top,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="multi-row",
+            key="top_funds_table",
+            column_config={
+                "1yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
+                "3yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
+                "5yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
+                "10yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
+
+        if added:
+            st.success("Added to universe: " + ", ".join(added))
+        elif selected_rows:
+            st.caption("All selected funds are already in the universe.")
 
     funds = universe.load()
 
