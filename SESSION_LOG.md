@@ -1,5 +1,15 @@
 # SESSION_LOG
 
+## 2026-07-05 — Deployed to VPS + namespace parsing fix
+
+- Deployed Top funds leaderboard to VPS (git pull + service restart)
+- Bug: CAS Investment Partners showed empty holdings. Cause: its filer
+  writes infotable XML with ns1: namespace prefixes; the parser only
+  stripped a default xmlns declaration. Fix in edgar.parse_infotable:
+  strip namespaces from all element tags after parsing (any dialect works)
+- Cleared stale holdings caches (Mac + VPS) that held the empty results
+- Verified on VPS: CAS parses 5 holdings ($1.75B, Carvana-led)
+
 ## 2026-05-16 — Streamlit UI
 
 - Added `runner.py`, `universe.py`, `data/universe.json`, `app.py`, `requirements.txt`
