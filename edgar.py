@@ -159,14 +159,17 @@ PARTIES_CACHE = os.path.join(CACHE, "filing_parties.json")
 def filing_parties(cik: str, accession: str) -> dict:
     """Subject company and filer(s) named on a 13D/13G filing (cached).
 
-    Returns {"subject": {"name", "cik"} | None, "filed_by": [names]}."""
+    Returns {"subject": {"name", "cik"} | None,
+             "filed_by": [{"name", "cik"}]}."""
     os.makedirs(CACHE, exist_ok=True)
     cache = {}
     if os.path.exists(PARTIES_CACHE):
         with open(PARTIES_CACHE) as f:
             cache = json.load(f)
-    if accession in cache:
-        return cache[accession]
+    hit = cache.get(accession)
+    # refetch entries cached before filed_by carried CIKs (plain strings)
+    if hit and not (hit.get("filed_by") and isinstance(hit["filed_by"][0], str)):
+        return hit
     html = _get(filing_index_url(cik, accession))
     subject = None
     filed_by = []
@@ -180,7 +183,10 @@ def filing_parties(cik: str, accession: str) -> dict:
                 "cik": block_cik,
             }
         elif "(Filed by)" in text:
-            filed_by.append(text.split("(Filed by)")[0].strip())
+            filed_by.append({
+                "name": text.split("(Filed by)")[0].strip(),
+                "cik": block_cik,
+            })
     parties = {"subject": subject, "filed_by": filed_by}
     cache[accession] = parties
     with open(PARTIES_CACHE, "w") as f:

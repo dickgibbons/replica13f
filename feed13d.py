@@ -116,13 +116,15 @@ def update_feed(days_back: int = 7, on_progress: ProgressFn | None = None) -> di
                 parties = {"subject": None, "filed_by": []}
             subject = parties.get("subject") or {}
             scik = subject.get("cik")
+            filed_by = parties.get("filed_by") or []
             rows[acc] = {
                 "filed": meta["date"],
                 "form": _form_label(meta["form"]),
                 "company": subject.get("name") or "—",
                 "company_cik": scik,
                 "ticker": tickers.get(int(scik), "") if scik else "",
-                "filers": parties.get("filed_by") or [],
+                "filers": [f["name"] for f in filed_by],
+                "filer_ciks": [f["cik"] for f in filed_by if f.get("cik")],
                 "url": edgar.filing_index_url(meta["path_cik"], acc),
             }
             new_count += 1
@@ -145,6 +147,19 @@ def recent_rows(feed: dict, days: int = 30) -> list[dict]:
     rows = [r for r in feed.get("rows", {}).values() if r["filed"] >= cutoff]
     rows.sort(key=lambda r: r["filed"], reverse=True)
     return rows
+
+
+def universe_rows(rows: list[dict], funds: list[dict]) -> list[dict]:
+    """Feed rows filed by a universe fund (matched by filer CIK).
+
+    Each returned row gains a 'fund' key with the universe fund's name."""
+    by_cik = {str(f["cik"]).zfill(10): f["name"] for f in funds}
+    out = []
+    for r in rows:
+        matched = [by_cik[c] for c in r.get("filer_ciks", []) if c in by_cik]
+        if matched:
+            out.append({**r, "fund": ", ".join(matched)})
+    return out
 
 
 def most_targeted(rows: list[dict], limit: int = 20) -> list[dict]:

@@ -1,5 +1,15 @@
 # SESSION_LOG
 
+## 2026-07-05 — Universe funds surfaced in the daily 13D feed
+
+- `edgar.filing_parties` now records each filer's CIK (old string-only
+  cache entries auto-refetch); feed rows carry `filer_ciks`
+- `feed13d.universe_rows`: feed rows filed by universe funds, matched by
+  CIK (immune to name variations)
+- New "Filed by your universe funds" table in the daily feed section
+- Feed regenerated (schema change); verified: Millstreet/DBD, Viking/LAB,
+  Pershing/HHH matched in the 30-day window
+
 ## 2026-07-05 — Market-wide daily 13D feed + cron
 
 - `feed13d.py`: pulls EDGAR daily form indexes (form.YYYYMMDD.idx), keeps

@@ -687,6 +687,36 @@ def main():
             )
             _csv_download("Download feed CSV", df_feed, "feed_13d.csv", "csv_feed13d")
 
+            st.markdown("**Filed by your universe funds**")
+            urows = feed13d.universe_rows(rows, universe.load())
+            if urows:
+                df_ufeed = pd.DataFrame([
+                    {
+                        "Filed": r["filed"],
+                        "Your fund": r["fund"],
+                        "Company": r["company"],
+                        "Ticker": r["ticker"] or "—",
+                        "Form": r["form"],
+                        "Filing": r["url"],
+                    }
+                    for r in urows
+                ])
+                st.dataframe(
+                    df_ufeed,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Filing": st.column_config.LinkColumn(
+                            "Filing", display_text="open on EDGAR"
+                        ),
+                    },
+                )
+            else:
+                st.caption(
+                    f"No 13Ds filed by your universe funds in the last "
+                    f"{lookback} days."
+                )
+
             a1, a2 = st.columns(2)
             with a1:
                 st.markdown("**Most 13D'd companies**")
