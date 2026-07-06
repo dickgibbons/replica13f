@@ -16,6 +16,7 @@ import holdings as holdings_mod
 import insider_score
 import leaderboard
 import runner
+import ticker_lookup
 import universe
 
 ROOT = os.path.dirname(__file__)
@@ -294,9 +295,9 @@ def main():
         run_clicked = st.button("Run ranking", type="primary", use_container_width=True)
 
     (tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_13d,
-     tab_insider, tab_detail) = st.tabs(
+     tab_insider, tab_ticker, tab_detail) = st.tabs(
         ["Top funds", "Universe", "Results", "Holdings", "Moves", "13D filings",
-         "Insider buys", "Fund detail"]
+         "Insider buys", "Ticker lookup", "Fund detail"]
     )
 
     with tab_top:
@@ -957,6 +958,115 @@ def main():
                 "No insider feed yet — click **Refresh feed now**, or wait for "
                 "the daily pull on the VPS."
             )
+
+    with tab_ticker:
+        st.subheader("Ticker lookup")
+        st.caption(
+            "One stock, everyone involved: insider buys & sells (Form 4), "
+            "13D/13G holders, and which of your followed funds own it per "
+            "their latest 13F."
+        )
+
+        c_in, c_go = st.columns([2, 1])
+        with c_in:
+            tl_ticker = st.text_input("Ticker", key="tl_ticker",
+                                      placeholder="e.g. HHH")
+        with c_go:
+            st.write("")
+            st.write("")
+            tl_go = st.button("Look up", type="primary", key="tl_go")
+
+        t_in = tl_ticker.strip().upper()
+        # run on button click OR whenever a new ticker is entered (Enter key)
+        if t_in and (tl_go or st.session_state.get("tl_last_ticker") != t_in):
+            st.session_state["tl_last_ticker"] = t_in
+            tstatus = st.empty()
+            with st.spinner(f"Pulling EDGAR filings for {t_in}…"):
+                res = ticker_lookup.lookup(
+                    t_in, on_progress=lambda m: tstatus.caption(m)
+                )
+            tstatus.empty()
+            if res is None:
+                st.error(
+                    f"Ticker '{t_in}' not found in the SEC's "
+                    "company list — check the symbol."
+                )
+                st.session_state.pop("tl_result", None)
+            else:
+                st.session_state["tl_result"] = res
+
+        tl_res = st.session_state.get("tl_result")
+        if tl_res and not tl_res.get("error"):
+            st.markdown(f"### {tl_res['name']}  ·  {tl_res['ticker']}")
+            st.caption(f"CIK {tl_res['cik']}")
+
+            st.markdown("**Followed funds holding it (latest 13F)**")
+            hsnap = _load_holdings_snapshot()
+            if hsnap:
+                pos = ticker_lookup.fund_positions(tl_res["ticker"], hsnap)
+                if pos:
+                    st.dataframe(pd.DataFrame([
+                        {
+                            "Fund": p["fund"],
+                            "Value": _fmt_usd(p["value_usd"]),
+                            "% of book": f"{p['pct_of_book'] * 100:.1f}%",
+                            "Shares": _fmt_shares(p.get("shares")),
+                            "13F period": p["period"],
+                        }
+                        for p in pos
+                    ]), use_container_width=True, hide_index=True)
+                else:
+                    st.caption("None of your universe funds hold it "
+                               "(per the loaded holdings snapshot).")
+            else:
+                st.info("Load holdings in the **Holdings** tab first to see "
+                        "which of your funds own it.")
+
+            st.markdown("**13D / 13G holders**")
+            if tl_res["holders"]:
+                st.dataframe(pd.DataFrame([
+                    {
+                        "Filed": h["filed"],
+                        "Form": h["form"],
+                        "Holder(s)": h["holders"],
+                        "Filing": h["url"],
+                    }
+                    for h in tl_res["holders"]
+                ]), use_container_width=True, hide_index=True,
+                    column_config={
+                        "Filing": st.column_config.LinkColumn(
+                            "Filing", display_text="open on EDGAR"),
+                    })
+            else:
+                st.caption("No 13D/13G filings on record.")
+
+            st.markdown("**Insider activity (open-market buys & sells, "
+                        f"last {ticker_lookup.MAX_FORM4} Form 4s)**")
+            if tl_res["trades"]:
+                st.dataframe(pd.DataFrame([
+                    {
+                        "Filed": t["filed"],
+                        "Trade": t["trade"],
+                        "Action": t["action"],
+                        "Insider": t["insider"],
+                        "Title": t["title"],
+                        "Shares": _fmt_shares(t["shares"]),
+                        "Price": f"${t['price']:,.2f}" if t.get("price") else "—",
+                        "Value": _fmt_usd(t["value"]),
+                        "Plan": "10b5-1" if t.get("plan") else "",
+                        "Filing": t["url"],
+                    }
+                    for t in tl_res["trades"]
+                ]), use_container_width=True, hide_index=True,
+                    column_config={
+                        "Filing": st.column_config.LinkColumn(
+                            "Filing", display_text="open on EDGAR"),
+                    })
+            else:
+                st.caption("No open-market insider trades in the recent "
+                           "Form 4s (grants and option exercises excluded).")
+        elif tl_res and tl_res.get("error"):
+            st.error(tl_res["error"])
 
     with tab_detail:
         funds = universe.load()

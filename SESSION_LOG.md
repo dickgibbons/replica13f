@@ -1,5 +1,18 @@
 # SESSION_LOG
 
+## 2026-07-06 — Ticker lookup tab
+
+- New tab: enter a ticker → (1) followed funds holding it per the loaded
+  13F holdings snapshot, (2) all 13D/13G holders (filer names via the
+  shared filing_parties cache), (3) insider open-market buys AND sells
+  from the issuer's last 40 Form 4s
+- `ticker_lookup.py` (one submissions fetch per company);
+  `form4._parse_trades` generalizes the parser to P+S codes
+- Lookup auto-runs when the ticker changes (Enter) — synthetic browser
+  events don't reach Streamlit inputs, so UI verified with
+  streamlit.testing.v1 AppTest (HHH: Pershing $1.19B / 8.7% of book,
+  25 holder filings incl. Pershing 13D/As, 3 insider trades)
+
 ## 2026-07-05 — Conviction score + insider batting average
 
 - `form4._parse_purchases` also captures owner_ciks (rptOwnerCik) and the

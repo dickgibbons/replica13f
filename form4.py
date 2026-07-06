@@ -166,6 +166,73 @@ def _parse_purchases(txt: str) -> dict | None:
     }
 
 
+def _parse_trades(txt: str, codes: tuple[str, ...] = ("P", "S")) -> list[dict]:
+    """All open-market trades in one Form 4, one row per transaction code.
+
+    Unlike _parse_purchases (feed-oriented, P only), this keeps sales too —
+    used by the ticker lookup. Returns [{action, trade, shares, price,
+    value, owned_after, insider, title, plan}]."""
+    m = re.search(r"<XML>(.*?)</XML>", txt, re.S)
+    if not m:
+        return []
+    try:
+        root = ET.fromstring(m.group(1).strip())
+    except ET.ParseError:
+        return []
+
+    agg: dict[str, dict] = {}
+    for tx in root.iter("nonDerivativeTransaction"):
+        code = tx.findtext(".//transactionCode")
+        if code not in codes:
+            continue
+        sh = float(tx.findtext(".//transactionShares/value") or 0)
+        px = float(tx.findtext(".//transactionPricePerShare/value") or 0)
+        if sh <= 0:
+            continue
+        e = agg.setdefault(code, {"shares": 0.0, "cost": 0.0,
+                                  "trade": None, "owned_after": None})
+        e["shares"] += sh
+        e["cost"] += sh * px
+        d = tx.findtext(".//transactionDate/value")
+        if d and (e["trade"] is None or d < e["trade"]):
+            e["trade"] = d
+        oa = tx.findtext(".//sharesOwnedFollowingTransaction/value")
+        if oa:
+            e["owned_after"] = float(oa)
+    if not agg:
+        return []
+
+    owners = [
+        (o.findtext(".//rptOwnerName") or "").strip()
+        for o in root.iter("reportingOwner")
+    ]
+    rel = root.find(".//reportingOwnerRelationship")
+    title = _title(
+        rel,
+        rel.findtext("officerTitle") if rel is not None else None,
+        rel.findtext("isDirector") if rel is not None else None,
+        rel.findtext("isOfficer") if rel is not None else None,
+        rel.findtext("isTenPercentOwner") if rel is not None else None,
+    )
+    plan = (root.findtext(".//aff10b5One") or "").strip().lower() in ("1", "true")
+    label = {"P": "Buy", "S": "Sell"}
+    out = []
+    for code, e in agg.items():
+        out.append({
+            "action": label.get(code, code),
+            "trade": e["trade"] or "",
+            "insider": " / ".join(n for n in owners if n) or "—",
+            "title": title,
+            "plan": plan,
+            "shares": round(e["shares"]),
+            "price": round(e["cost"] / e["shares"], 2) if e["shares"] else None,
+            "value": round(e["cost"]),
+            "owned_after": (round(e["owned_after"])
+                            if e["owned_after"] is not None else None),
+        })
+    return out
+
+
 def _fetch_one(acc: str, path: str, day_s: str) -> tuple[str, dict | None, bool]:
     """Returns (accession, purchase-row-or-None, fetch_ok).
 
