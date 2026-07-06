@@ -12,6 +12,13 @@
   cluster-buys table (2+ distinct insiders on one stock)
 - data/feed_form4.json gitignored (cron-owned), 90-day window
 - Verified: CREX CEO+CFO same-day buys ($800k) surfaced as a cluster
+- Post-deploy fix: VPS's fast pipe pushed 4 workers past SEC's 10 req/s;
+  blocked responses read as "no filings" and days were marked done
+  permanently (silent loss). Now: thread-safe global limiter (~7.5/s),
+  retries with backoff, and days only close when fully checked.
+  Lesson: verify backfill logs per-day counts, not just the summary line;
+  and pkill/pgrep -f self-match their own remote shell — use exact
+  process checks
 
 ## 2026-07-05 — 13G (short form) added to the daily feed
 
