@@ -16,6 +16,7 @@ import datetime as dt
 import json
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -32,14 +33,43 @@ MAX_WORKERS = 4
 
 ProgressFn = Callable[[str, str], None]
 
+# Global limiter shared by all workers: at most one request per 0.13s
+# (~7.5/s), safely inside the SEC's 10 req/s ceiling even from a fast
+# datacenter connection. Getting blocked looks like empty days — worse
+# than being slow.
+_rl_lock = threading.Lock()
+_rl_last = [0.0]
+
+
+def _rate_limited_get(url: str) -> requests.Response:
+    """GET with global pacing; retries blocks/5xx; 404 passes through."""
+    for attempt in range(5):
+        with _rl_lock:
+            wait = 0.13 - (time.time() - _rl_last[0])
+            if wait > 0:
+                time.sleep(wait)
+            _rl_last[0] = time.time()
+        try:
+            r = requests.get(url, headers=edgar.H, timeout=45)
+        except requests.RequestException:
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        if r.status_code == 200 or r.status_code == 404:
+            return r
+        time.sleep(2.0 * (attempt + 1))  # 403/429/5xx: back off and retry
+    raise RuntimeError(f"EDGAR fetch failed after retries: {url}")
+
 
 def _day_form4(day: dt.date) -> dict[str, str]:
-    """{accession: archive_path} for all Form 4 (not 4/A) filed that day."""
+    """{accession: archive_path} for all Form 4 (not 4/A) filed that day.
+
+    Raises on fetch failure (rate limit etc.) so the day is NOT silently
+    treated as empty; a 404 (weekend/holiday) returns {}."""
     q = (day.month - 1) // 3 + 1
     url = (f"https://www.sec.gov/Archives/edgar/daily-index/{day.year}"
            f"/QTR{q}/form.{day.strftime('%Y%m%d')}.idx")
-    r = requests.get(url, headers=edgar.H, timeout=45)
-    if r.status_code != 200:
+    r = _rate_limited_get(url)
+    if r.status_code == 404:
         return {}
     out: dict[str, str] = {}
     for line in r.text.splitlines():
@@ -126,22 +156,24 @@ def _parse_purchases(txt: str) -> dict | None:
     }
 
 
-def _fetch_one(acc: str, path: str, day_s: str) -> tuple[str, dict | None]:
-    time.sleep(0.1)  # stay well under SEC's 10 req/s across the pool
+def _fetch_one(acc: str, path: str, day_s: str) -> tuple[str, dict | None, bool]:
+    """Returns (accession, purchase-row-or-None, fetch_ok).
+
+    fetch_ok=False means we could not check this filing — it must NOT be
+    cached as 'seen', so a later run retries it."""
     try:
-        r = requests.get("https://www.sec.gov/Archives/" + path,
-                         headers=edgar.H, timeout=45)
+        r = _rate_limited_get("https://www.sec.gov/Archives/" + path)
         if r.status_code != 200:
-            return acc, None
+            return acc, None, False
         row = _parse_purchases(r.text)
-    except (requests.RequestException, ValueError):
-        return acc, None
+    except (RuntimeError, ValueError):
+        return acc, None, False
     if not row:
-        return acc, None
+        return acc, None, True
     path_cik = path.split("/")[2]
     row["filed"] = day_s
     row["url"] = edgar.filing_index_url(path_cik, acc)
-    return acc, row
+    return acc, row, True
 
 
 def load_feed() -> dict:
@@ -179,12 +211,17 @@ def update_feed(days_back: int = 3, on_progress: ProgressFn | None = None) -> di
         if day_s in done and day != today:
             continue
         _prog(day_s, "fetching index…")
-        accs = _day_form4(day)
+        try:
+            accs = _day_form4(day)
+        except RuntimeError:
+            _prog(day_s, "index fetch failed — will retry next run")
+            continue
         fresh = {a: p for a, p in accs.items() if a not in rows and a not in seen}
         _prog(day_s, f"checking {len(fresh)} Form 4s…")
         checked = 0
+        failures = 0
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            for acc, row in pool.map(
+            for acc, row, ok in pool.map(
                 lambda item: _fetch_one(item[0], item[1], day_s), fresh.items()
             ):
                 checked += 1
@@ -193,11 +230,16 @@ def update_feed(days_back: int = 3, on_progress: ProgressFn | None = None) -> di
                 if row:
                     rows[acc] = row
                     new_count += 1
-                else:
+                elif ok:
                     seen.add(acc)
-        if day != today:
+                else:
+                    failures += 1
+        # only close the book on a day if every filing was actually checked
+        if day != today and failures == 0:
             done.add(day_s)
-        _prog(day_s, f"done ({new_count} purchases so far)")
+        _prog(day_s, f"done ({new_count} purchases so far"
+                     + (f", {failures} fetch failures — day will re-run" if failures else "")
+                     + ")")
 
     cutoff = (today - dt.timedelta(days=KEEP_DAYS)).isoformat()
     feed["rows"] = {a: r for a, r in rows.items() if r["filed"] >= cutoff}
