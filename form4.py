@@ -1,0 +1,241 @@
+"""Market-wide insider open-market purchases from SEC Form 4 filings.
+
+Screens like openinsider.com: every Form 4 filed each day is fetched and
+only open-market purchases (transaction code P, acquired) are kept, with
+insider name/title, shares, price, value, and a link to the filing.
+Persisted in data/feed_form4.json; scripts/pull_insiders.py runs daily
+from cron.
+
+Form 4 volume is ~1,500-2,500/day and there is no purchases-only source,
+so each filing must be fetched to learn its transaction codes. A small
+thread pool keeps the daily pull to a few minutes while staying inside
+the SEC's 10 requests/second guidance.
+"""
+from __future__ import annotations
+import datetime as dt
+import json
+import os
+import re
+import time
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable
+
+import requests
+
+import edgar
+
+ROOT = os.path.dirname(__file__)
+FEED_PATH = os.path.join(ROOT, "data", "feed_form4.json")
+KEEP_DAYS = 90
+MAX_WORKERS = 4
+
+ProgressFn = Callable[[str, str], None]
+
+
+def _day_form4(day: dt.date) -> dict[str, str]:
+    """{accession: archive_path} for all Form 4 (not 4/A) filed that day."""
+    q = (day.month - 1) // 3 + 1
+    url = (f"https://www.sec.gov/Archives/edgar/daily-index/{day.year}"
+           f"/QTR{q}/form.{day.strftime('%Y%m%d')}.idx")
+    r = requests.get(url, headers=edgar.H, timeout=45)
+    if r.status_code != 200:
+        return {}
+    out: dict[str, str] = {}
+    for line in r.text.splitlines():
+        if line[:17].strip() != "4":
+            continue
+        parts = line.rsplit(None, 3)
+        if len(parts) != 4 or not parts[3].startswith("edgar/data/"):
+            continue
+        acc = parts[3].rsplit("/", 1)[-1].removesuffix(".txt")
+        out.setdefault(acc, parts[3])
+    return out
+
+
+def _title(rel: ET.Element | None, officer_title: str | None,
+           is_dir: str | None, is_officer: str | None, is_ten: str | None) -> str:
+    parts = []
+    if officer_title and officer_title.strip():
+        parts.append(officer_title.strip())
+    elif is_officer in ("1", "true"):
+        parts.append("Officer")
+    if is_dir in ("1", "true"):
+        parts.append("Dir")
+    if is_ten in ("1", "true"):
+        parts.append("10%")
+    return ", ".join(parts) or "—"
+
+
+def _parse_purchases(txt: str) -> dict | None:
+    """Aggregate open-market purchases (code P, acquired) in one Form 4.
+
+    Returns a partial row or None if the filing contains no purchases."""
+    m = re.search(r"<XML>(.*?)</XML>", txt, re.S)
+    if not m:
+        return None
+    try:
+        root = ET.fromstring(m.group(1).strip())
+    except ET.ParseError:
+        return None
+
+    shares = 0.0
+    cost = 0.0
+    owned_after = None
+    trade_date = None
+    for tx in root.iter("nonDerivativeTransaction"):
+        code = tx.findtext(".//transactionCode")
+        ad = tx.findtext(".//transactionAcquiredDisposedCode/value")
+        if code != "P" or ad != "A":
+            continue
+        sh = float(tx.findtext(".//transactionShares/value") or 0)
+        px = float(tx.findtext(".//transactionPricePerShare/value") or 0)
+        shares += sh
+        cost += sh * px
+        d = tx.findtext(".//transactionDate/value")
+        if d and (trade_date is None or d < trade_date):
+            trade_date = d
+        oa = tx.findtext(".//sharesOwnedFollowingTransaction/value")
+        if oa:
+            owned_after = float(oa)
+    if shares <= 0:
+        return None
+
+    owners = [
+        (o.findtext(".//rptOwnerName") or "").strip()
+        for o in root.iter("reportingOwner")
+    ]
+    rel = root.find(".//reportingOwnerRelationship")
+    title = _title(
+        rel,
+        rel.findtext("officerTitle") if rel is not None else None,
+        rel.findtext("isDirector") if rel is not None else None,
+        rel.findtext("isOfficer") if rel is not None else None,
+        rel.findtext("isTenPercentOwner") if rel is not None else None,
+    )
+    return {
+        "trade": trade_date or "",
+        "company": (root.findtext(".//issuerName") or "—").strip(),
+        "ticker": (root.findtext(".//issuerTradingSymbol") or "").strip().upper(),
+        "insider": " / ".join(n for n in owners if n) or "—",
+        "title": title,
+        "shares": round(shares),
+        "price": round(cost / shares, 2) if shares else None,
+        "value": round(cost),
+        "owned_after": round(owned_after) if owned_after is not None else None,
+    }
+
+
+def _fetch_one(acc: str, path: str, day_s: str) -> tuple[str, dict | None]:
+    time.sleep(0.1)  # stay well under SEC's 10 req/s across the pool
+    try:
+        r = requests.get("https://www.sec.gov/Archives/" + path,
+                         headers=edgar.H, timeout=45)
+        if r.status_code != 200:
+            return acc, None
+        row = _parse_purchases(r.text)
+    except (requests.RequestException, ValueError):
+        return acc, None
+    if not row:
+        return acc, None
+    path_cik = path.split("/")[2]
+    row["filed"] = day_s
+    row["url"] = edgar.filing_index_url(path_cik, acc)
+    return acc, row
+
+
+def load_feed() -> dict:
+    if os.path.exists(FEED_PATH):
+        with open(FEED_PATH) as f:
+            return json.load(f)
+    return {"updated": None, "days_done": [], "rows": {}}
+
+
+def _save_feed(feed: dict) -> None:
+    os.makedirs(os.path.dirname(FEED_PATH), exist_ok=True)
+    with open(FEED_PATH, "w") as f:
+        json.dump(feed, f, indent=1)
+        f.write("\n")
+
+
+def update_feed(days_back: int = 3, on_progress: ProgressFn | None = None) -> dict:
+    """Pull Form 4s for the last N days, keep only purchases (idempotent)."""
+    def _prog(name: str, msg: str):
+        if on_progress:
+            on_progress(name, msg)
+
+    feed = load_feed()
+    rows = feed["rows"]
+    done = set(feed.get("days_done", []))
+    seen = set(feed.get("seen", []))  # non-purchase accessions already checked
+    today = dt.date.today()
+    new_count = 0
+
+    for offset in range(days_back, -1, -1):
+        day = today - dt.timedelta(days=offset)
+        if day.weekday() >= 5:
+            continue
+        day_s = day.isoformat()
+        if day_s in done and day != today:
+            continue
+        _prog(day_s, "fetching index…")
+        accs = _day_form4(day)
+        fresh = {a: p for a, p in accs.items() if a not in rows and a not in seen}
+        _prog(day_s, f"checking {len(fresh)} Form 4s…")
+        checked = 0
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            for acc, row in pool.map(
+                lambda item: _fetch_one(item[0], item[1], day_s), fresh.items()
+            ):
+                checked += 1
+                if checked % 200 == 0:
+                    _prog(day_s, f"checked {checked}/{len(fresh)}…")
+                if row:
+                    rows[acc] = row
+                    new_count += 1
+                else:
+                    seen.add(acc)
+        if day != today:
+            done.add(day_s)
+        _prog(day_s, f"done ({new_count} purchases so far)")
+
+    cutoff = (today - dt.timedelta(days=KEEP_DAYS)).isoformat()
+    feed["rows"] = {a: r for a, r in rows.items() if r["filed"] >= cutoff}
+    feed["days_done"] = sorted(d for d in done if d >= cutoff)
+    feed["seen"] = sorted(seen)[-100000:]
+    feed["updated"] = dt.datetime.now().isoformat(timespec="seconds")
+    _save_feed(feed)
+    feed["new_count"] = new_count
+    return feed
+
+
+def recent_rows(feed: dict, days: int = 30, min_value: float = 0) -> list[dict]:
+    cutoff = (dt.date.today() - dt.timedelta(days=days)).isoformat()
+    rows = [
+        r for r in feed.get("rows", {}).values()
+        if r["filed"] >= cutoff and (r.get("value") or 0) >= min_value
+    ]
+    rows.sort(key=lambda r: (r["filed"], r.get("value") or 0), reverse=True)
+    return rows
+
+
+def cluster_buys(rows: list[dict], limit: int = 20) -> list[dict]:
+    """Companies where 2+ distinct insiders bought in the window."""
+    by_co: dict[str, dict] = {}
+    for r in rows:
+        key = r["ticker"] or r["company"]
+        e = by_co.setdefault(key, {
+            "ticker": r["ticker"], "company": r["company"],
+            "insiders": set(), "buys": 0, "total_value": 0.0,
+            "last_filed": r["filed"],
+        })
+        e["insiders"].add(r["insider"])
+        e["buys"] += 1
+        e["total_value"] += r.get("value") or 0
+        e["last_filed"] = max(e["last_filed"], r["filed"])
+    out = [
+        {**e, "insiders": len(e["insiders"])}
+        for e in by_co.values() if len(e["insiders"]) >= 2
+    ]
+    out.sort(key=lambda x: (-x["insiders"], -x["total_value"]))
+    return out[:limit]

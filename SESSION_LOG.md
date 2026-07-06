@@ -1,5 +1,18 @@
 # SESSION_LOG
 
+## 2026-07-05 — Insider buys tab (Form 4 screening à la openinsider)
+
+- `form4.py`: screens every daily Form 4 for open-market purchases
+  (code P / acquired only — grants, exercises, sales excluded); keeps
+  insider, title, shares, wtd avg price, value, owned-after, link;
+  thread pool (4 workers, 0.1s sleep) stays under SEC 10 req/s;
+  "seen" set caches non-purchase accessions so re-pulls are cheap
+- `scripts/pull_insiders.py --days N` cron entry point; VPS cron 11:40 UTC
+- New "Insider buys" tab: lookback + min-value filters, purchases table,
+  cluster-buys table (2+ distinct insiders on one stock)
+- data/feed_form4.json gitignored (cron-owned), 90-day window
+- Verified: CREX CEO+CFO same-day buys ($800k) surfaced as a cluster
+
 ## 2026-07-05 — 13G (short form) added to the daily feed
 
 - FORM_RE now matches SC/SCHEDULE 13G + amendments; rows carry

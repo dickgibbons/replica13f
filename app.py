@@ -11,6 +11,7 @@ import activist
 import classify
 import edgar
 import feed13d
+import form4
 import holdings as holdings_mod
 import leaderboard
 import runner
@@ -291,8 +292,10 @@ def main():
 
         run_clicked = st.button("Run ranking", type="primary", use_container_width=True)
 
-    tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_13d, tab_detail = st.tabs(
-        ["Top funds", "Universe", "Results", "Holdings", "Moves", "13D filings", "Fund detail"]
+    (tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_13d,
+     tab_insider, tab_detail) = st.tabs(
+        ["Top funds", "Universe", "Results", "Holdings", "Moves", "13D filings",
+         "Insider buys", "Fund detail"]
     )
 
     with tab_top:
@@ -837,6 +840,100 @@ def main():
             st.info("No 13D filings found for the current universe.")
         else:
             st.info("Click **Load 13D filings** to check every fund in the universe.")
+
+    with tab_insider:
+        st.subheader("Insider open-market buys")
+        st.caption(
+            "Every SEC Form 4 is screened daily; only open-market purchases "
+            "(transaction code P) are kept — insiders spending their own money, "
+            "the same screen as openinsider.com. Grants, option exercises, and "
+            "sales are excluded. The VPS refreshes this feed every day."
+        )
+
+        ifeed = form4.load_feed()
+        ci_refresh, ci_look, ci_min = st.columns([1, 1, 1])
+        with ci_refresh:
+            refresh_insiders = st.button("Refresh feed now", key="ins_refresh")
+        with ci_look:
+            ins_lookback = st.selectbox(
+                "Lookback (days)", [7, 14, 30, 60, 90], index=2, key="ins_lookback"
+            )
+        with ci_min:
+            min_label = st.selectbox(
+                "Min purchase value",
+                ["$0", "$25k", "$100k", "$250k", "$1M"],
+                index=1,
+                key="ins_minval",
+            )
+        min_value = {"$0": 0, "$25k": 25_000, "$100k": 100_000,
+                     "$250k": 250_000, "$1M": 1_000_000}[min_label]
+
+        if refresh_insiders:
+            istatus = st.empty()
+            with st.spinner("Screening Form 4s from EDGAR (a few minutes)…"):
+                ifeed = form4.update_feed(
+                    days_back=2,
+                    on_progress=lambda d, m: istatus.caption(f"{d}: {m}"),
+                )
+            istatus.caption(f"Done — {ifeed.get('new_count', 0)} new purchases")
+
+        if ifeed.get("rows"):
+            irows = form4.recent_rows(ifeed, days=int(ins_lookback), min_value=min_value)
+            st.caption(
+                f"{len(irows)} purchases ≥ {min_label} in the last {ins_lookback} "
+                f"days · feed updated {ifeed.get('updated', '—')}"
+            )
+            df_ins = pd.DataFrame([
+                {
+                    "Filed": r["filed"],
+                    "Trade": r["trade"],
+                    "Ticker": r["ticker"] or "—",
+                    "Company": r["company"],
+                    "Insider": r["insider"],
+                    "Title": r["title"],
+                    "Shares": _fmt_shares(r["shares"]),
+                    "Price": f"${r['price']:,.2f}" if r.get("price") else "—",
+                    "Value": _fmt_usd(r["value"]),
+                    "Owned after": _fmt_shares(r.get("owned_after")),
+                    "Filing": r["url"],
+                }
+                for r in irows
+            ])
+            st.dataframe(
+                df_ins,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Filing": st.column_config.LinkColumn(
+                        "Filing", display_text="open on EDGAR"
+                    ),
+                },
+            )
+            _csv_download("Download insider CSV", df_ins, "insider_buys.csv", "csv_ins")
+
+            st.markdown("**Cluster buys — 2+ insiders buying the same stock**")
+            st.caption("Multiple insiders buying together is the strongest insider signal.")
+            clusters = form4.cluster_buys(irows)
+            if clusters:
+                df_cl = pd.DataFrame([
+                    {
+                        "Ticker": c["ticker"] or "—",
+                        "Company": c["company"],
+                        "# Insiders": c["insiders"],
+                        "Buys": c["buys"],
+                        "Total value": _fmt_usd(c["total_value"]),
+                        "Last filed": c["last_filed"],
+                    }
+                    for c in clusters
+                ])
+                st.dataframe(df_cl, use_container_width=True, hide_index=True)
+            else:
+                st.caption("No cluster buys in this window/filter.")
+        else:
+            st.info(
+                "No insider feed yet — click **Refresh feed now**, or wait for "
+                "the daily pull on the VPS."
+            )
 
     with tab_detail:
         funds = universe.load()
