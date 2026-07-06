@@ -1,9 +1,10 @@
-"""Market-wide daily 13D feed built from EDGAR daily form indexes.
+"""Market-wide daily 13D/13G feed built from EDGAR daily form indexes.
 
 Every business day EDGAR publishes form.YYYYMMDD.idx listing all filings.
-We keep every SC 13D / SCHEDULE 13D (and amendments) with the target
+We keep every SC/SCHEDULE 13D and 13G (and amendments) with the target
 company, its ticker, and who filed — persisted in data/feed13d.json so a
-daily cron (scripts/pull_13d.py) can keep it current.
+daily cron (scripts/pull_13d.py) can keep it current. 13D = activist
+stake >5%; 13G = the passive (short-form) equivalent.
 """
 from __future__ import annotations
 import datetime as dt
@@ -19,7 +20,7 @@ import edgar
 ROOT = os.path.dirname(__file__)
 FEED_PATH = os.path.join(ROOT, "data", "feed13d.json")
 KEEP_DAYS = 120          # prune rows older than this
-FORM_RE = re.compile(r"^(SC 13D(?:/A)?|SCHEDULE 13D(?:/A)?)\s")
+FORM_RE = re.compile(r"^(SC 13[DG](?:/A)?|SCHEDULE 13[DG](?:/A)?)\s")
 
 ProgressFn = Callable[[str, str], None]
 
@@ -117,9 +118,11 @@ def update_feed(days_back: int = 7, on_progress: ProgressFn | None = None) -> di
             subject = parties.get("subject") or {}
             scik = subject.get("cik")
             filed_by = parties.get("filed_by") or []
+            label = _form_label(meta["form"])
             rows[acc] = {
                 "filed": meta["date"],
-                "form": _form_label(meta["form"]),
+                "form": label,
+                "kind": "13G" if label.startswith("13G") else "13D",
                 "company": subject.get("name") or "—",
                 "company_cik": scik,
                 "ticker": tickers.get(int(scik), "") if scik else "",
@@ -147,6 +150,18 @@ def recent_rows(feed: dict, days: int = 30) -> list[dict]:
     rows = [r for r in feed.get("rows", {}).values() if r["filed"] >= cutoff]
     rows.sort(key=lambda r: r["filed"], reverse=True)
     return rows
+
+
+def row_kind(r: dict) -> str:
+    """'13D' or '13G' (works for rows saved before the kind field existed)."""
+    return r.get("kind") or ("13G" if r["form"].startswith("13G") else "13D")
+
+
+def filter_family(rows: list[dict], family: str) -> list[dict]:
+    """family: '13D' | '13G' | 'both'."""
+    if family == "both":
+        return rows
+    return [r for r in rows if row_kind(r) == family]
 
 
 def universe_rows(rows: list[dict], funds: list[dict]) -> list[dict]:

@@ -1,5 +1,16 @@
 # SESSION_LOG
 
+## 2026-07-05 — 13G (short form) added to the daily feed
+
+- FORM_RE now matches SC/SCHEDULE 13G + amendments; rows carry
+  kind: 13D|13G (row_kind() derives it for pre-existing rows)
+- UI: "Form family" selector (13D only default / 13G only / both) applied
+  to the feed table and both aggregate tables; "Filed by your universe
+  funds" always shows both families
+- Feed regenerated (days_done reset required — prior days were scanned
+  under the 13D-only regime); VPS backfilled 45 days
+- Verified: Situational Awareness LP 13G on SharonAI (2026-06-29) captured
+
 ## 2026-07-05 — Universe funds surfaced in the daily 13D feed
 
 - `edgar.filing_parties` now records each filer's CIK (old string-only

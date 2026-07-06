@@ -642,22 +642,30 @@ def main():
             st.info("Click **Load moves** to compare the last two 13F filings per fund.")
 
     with tab_13d:
-        st.subheader("Daily 13D feed — all filers")
+        st.subheader("Daily 13D/13G feed — all filers")
         st.caption(
-            "Every 13D filed with the SEC, market-wide, pulled from EDGAR's daily "
-            "index. A 13D is filed within days of anyone taking an activist stake "
-            "above 5% of a company — much fresher than the quarterly 13F. "
-            "The VPS refreshes this feed automatically every day."
+            "Every 13D and 13G filed with the SEC, market-wide, pulled from "
+            "EDGAR's daily index. Both are >5%-ownership disclosures filed within "
+            "days — much fresher than the quarterly 13F. 13D = activist intent; "
+            "13G = passive (short form). The VPS refreshes this feed every day."
         )
 
         feed = feed13d.load_feed()
-        c_refresh, c_lookback = st.columns([1, 1])
+        c_refresh, c_family, c_lookback = st.columns([1, 1, 1])
         with c_refresh:
             refresh_feed = st.button("Refresh feed now")
+        with c_family:
+            family_pick = st.selectbox(
+                "Form family",
+                ["13D only", "13G only", "13D + 13G"],
+                index=0,
+                key="feed_family",
+            )
         with c_lookback:
             lookback = st.selectbox(
                 "Lookback (days)", [7, 14, 30, 60, 90], index=2, key="feed_lookback"
             )
+        family = {"13D only": "13D", "13G only": "13G", "13D + 13G": "both"}[family_pick]
 
         if refresh_feed:
             fstatus = st.empty()
@@ -669,10 +677,11 @@ def main():
             fstatus.caption(f"Done — {feed.get('new_count', 0)} new filings")
 
         if feed.get("rows"):
-            rows = feed13d.recent_rows(feed, days=int(lookback))
+            all_rows = feed13d.recent_rows(feed, days=int(lookback))
+            rows = feed13d.filter_family(all_rows, family)
             st.caption(
-                f"{len(rows)} filings in the last {lookback} days · "
-                f"feed updated {feed.get('updated', '—')}"
+                f"{len(rows)} {family_pick.replace(' only', '')} filings in the "
+                f"last {lookback} days · feed updated {feed.get('updated', '—')}"
             )
             df_feed = _feed_df(rows)
             st.dataframe(
@@ -688,7 +697,8 @@ def main():
             _csv_download("Download feed CSV", df_feed, "feed_13d.csv", "csv_feed13d")
 
             st.markdown("**Filed by your universe funds**")
-            urows = feed13d.universe_rows(rows, universe.load())
+            st.caption("Always shows both 13D and 13G, regardless of the filter above.")
+            urows = feed13d.universe_rows(all_rows, universe.load())
             if urows:
                 df_ufeed = pd.DataFrame([
                     {
