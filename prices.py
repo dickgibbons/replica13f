@@ -17,8 +17,9 @@ def _epoch(d: dt.date) -> int:
     return int(time.mktime(d.timetuple()))
 
 def _yahoo_symbol(t: str) -> str:
-    # Yahoo uses '-' for share classes (BRK.B -> BRK-B)
-    return t.replace(".", "-").upper()
+    # Yahoo uses '-' for share classes (BRK.B -> BRK-B); '/' appears in some
+    # filings' ticker fields and would break the cache path
+    return t.replace(".", "-").replace("/", "-").upper()
 
 def get_series(ticker: str, start: dt.date, end: dt.date):
     """Return sorted [(date_iso, adjclose)] for [start, end]. Cached per symbol

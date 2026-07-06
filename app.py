@@ -13,6 +13,7 @@ import edgar
 import feed13d
 import form4
 import holdings as holdings_mod
+import insider_score
 import leaderboard
 import runner
 import universe
@@ -851,7 +852,7 @@ def main():
         )
 
         ifeed = form4.load_feed()
-        ci_refresh, ci_look, ci_min = st.columns([1, 1, 1])
+        ci_refresh, ci_look, ci_min, ci_sort = st.columns([1, 1, 1, 1])
         with ci_refresh:
             refresh_insiders = st.button("Refresh feed now", key="ins_refresh")
         with ci_look:
@@ -865,6 +866,10 @@ def main():
                 index=1,
                 key="ins_minval",
             )
+        with ci_sort:
+            ins_sort = st.selectbox(
+                "Sort by", ["Conviction score", "Newest"], index=0, key="ins_sort"
+            )
         min_value = {"$0": 0, "$25k": 25_000, "$100k": 100_000,
                      "$250k": 250_000, "$1M": 1_000_000}[min_label]
 
@@ -875,26 +880,44 @@ def main():
                     days_back=2,
                     on_progress=lambda d, m: istatus.caption(f"{d}: {m}"),
                 )
+                insider_score.enrich_feed(
+                    ifeed,
+                    on_progress=lambda t, m: istatus.caption(f"{t}: {m}"),
+                )
             istatus.caption(f"Done — {ifeed.get('new_count', 0)} new purchases")
 
         if ifeed.get("rows"):
             irows = form4.recent_rows(ifeed, days=int(ins_lookback), min_value=min_value)
+            if ins_sort == "Conviction score":
+                irows = sorted(irows, key=lambda r: -(r.get("score") or 0))
             st.caption(
                 f"{len(irows)} purchases ≥ {min_label} in the last {ins_lookback} "
-                f"days · feed updated {ifeed.get('updated', '—')}"
+                f"days · feed updated {ifeed.get('updated', '—')} · "
+                "Score = size, stake increase, role, rarity, dip-buying, cluster, "
+                "record; pre-scheduled (10b5-1) buys are heavily discounted. "
+                "Record = buyer's prior buys that beat the S&P over 3 months."
             )
+
+            def _record(r):
+                if r.get("rec_n"):
+                    return (f"{r['rec_hits']}/{r['rec_n']} · "
+                            f"{r['rec_avg'] * 100:+.0f}%")
+                return "—"
+
             df_ins = pd.DataFrame([
                 {
+                    "Score": r.get("score", "—"),
                     "Filed": r["filed"],
-                    "Trade": r["trade"],
                     "Ticker": r["ticker"] or "—",
                     "Company": r["company"],
                     "Insider": r["insider"],
                     "Title": r["title"],
+                    "Value": _fmt_usd(r["value"]),
+                    "Record (3mo vs S&P)": _record(r),
+                    "Plan": "10b5-1" if r.get("plan") else "",
+                    "Why": r.get("why", ""),
                     "Shares": _fmt_shares(r["shares"]),
                     "Price": f"${r['price']:,.2f}" if r.get("price") else "—",
-                    "Value": _fmt_usd(r["value"]),
-                    "Owned after": _fmt_shares(r.get("owned_after")),
                     "Filing": r["url"],
                 }
                 for r in irows

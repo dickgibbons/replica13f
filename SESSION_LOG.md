@@ -1,5 +1,24 @@
 # SESSION_LOG
 
+## 2026-07-05 — Conviction score + insider batting average
+
+- `form4._parse_purchases` also captures owner_ciks (rptOwnerCik) and the
+  10b5-1 pre-scheduled-plan checkbox (aff10b5One, 2023+)
+- `insider_score.py`:
+  - score_purchase: 0-100 heuristic — size (≤25), stake increase (≤25),
+    role (CEO/CFO 15 → 10% owner 3), rarity (first buy in 2yrs ≤10),
+    dip-buying vs 52wk high (≤10), cluster (+10), track record (+15);
+    10b5-1 planned buys keep 40%
+  - batting_average: buyer's PRIOR purchases → 3-month return vs SPY
+    (n<3 → no record); owner histories = last 60 Form 4s per insider CIK,
+    cached in cache/insider_hist.json (30-day refresh)
+  - enrich_feed scores un-scored rows; wired into pull_insiders.py and
+    the UI refresh button
+- UI: Score / Record / Plan / Why columns, "Sort by conviction" default
+- Feeds regenerated on Mac + VPS (rows needed owner_ciks). Note: the
+  first local pull (pre-rate-limiter) had silently lost ~50 of 63
+  purchases for Jul 2 — same bug as the VPS, now fixed and verified
+
 ## 2026-07-05 — Insider buys tab (Form 4 screening à la openinsider)
 
 - `form4.py`: screens every daily Form 4 for open-market purchases

@@ -24,3 +24,4 @@ data/feed13d.json
 pull_13d.log
 data/feed_form4.json
 pull_insiders.log
+cache/insider_hist.json

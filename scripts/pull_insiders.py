@@ -24,6 +24,7 @@ if os.path.exists(env_path):
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 import form4  # noqa: E402
+import insider_score  # noqa: E402
 
 
 def main():
@@ -37,6 +38,12 @@ def main():
     )
     print(f"insider feed updated: {feed['updated']} · "
           f"{feed['new_count']} new purchases · {len(feed['rows'])} total kept")
+
+    scored = insider_score.enrich_feed(
+        feed,
+        on_progress=lambda tag, msg: print(f"[{tag}] {msg}", flush=True),
+    )
+    print(f"scored {scored} new purchases")
 
 
 if __name__ == "__main__":

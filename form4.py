@@ -135,6 +135,11 @@ def _parse_purchases(txt: str) -> dict | None:
         (o.findtext(".//rptOwnerName") or "").strip()
         for o in root.iter("reportingOwner")
     ]
+    owner_ciks = [
+        (o.findtext(".//rptOwnerCik") or "").strip().zfill(10)
+        for o in root.iter("reportingOwner")
+        if (o.findtext(".//rptOwnerCik") or "").strip()
+    ]
     rel = root.find(".//reportingOwnerRelationship")
     title = _title(
         rel,
@@ -143,12 +148,17 @@ def _parse_purchases(txt: str) -> dict | None:
         rel.findtext("isOfficer") if rel is not None else None,
         rel.findtext("isTenPercentOwner") if rel is not None else None,
     )
+    # 10b5-1 checkbox (since 2023): purchase was pre-scheduled, not a
+    # spur-of-conviction decision
+    plan = (root.findtext(".//aff10b5One") or "").strip().lower() in ("1", "true")
     return {
         "trade": trade_date or "",
         "company": (root.findtext(".//issuerName") or "—").strip(),
         "ticker": (root.findtext(".//issuerTradingSymbol") or "").strip().upper(),
         "insider": " / ".join(n for n in owners if n) or "—",
+        "owner_ciks": owner_ciks,
         "title": title,
+        "plan": plan,
         "shares": round(shares),
         "price": round(cost / shares, 2) if shares else None,
         "value": round(cost),
