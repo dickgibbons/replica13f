@@ -10,6 +10,7 @@ import streamlit as st
 import activist
 import classify
 import edgar
+import feed13d
 import holdings as holdings_mod
 import leaderboard
 import runner
@@ -124,6 +125,20 @@ def _activist_df(rows: list[dict]) -> pd.DataFrame:
             "Fund": r["fund"],
             "Form": r["form"],
             "Target company": r["subject"],
+            "Filing": r["url"],
+        }
+        for r in rows
+    ])
+
+
+def _feed_df(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "Filed": r["filed"],
+            "Company": r["company"],
+            "Ticker": r["ticker"] or "—",
+            "Form": r["form"],
+            "Filed by": ", ".join(r["filers"]) or "—",
             "Filing": r["url"],
         }
         for r in rows
@@ -627,11 +642,92 @@ def main():
             st.info("Click **Load moves** to compare the last two 13F filings per fund.")
 
     with tab_13d:
-        st.subheader("13D ownership filings")
+        st.subheader("Daily 13D feed — all filers")
         st.caption(
-            "A 13D is filed within days of a fund taking an activist stake above 5% "
-            "of a company — much fresher than the quarterly 13F. Amendments (13D/A) "
-            "signal the position is changing. 13G is the passive equivalent."
+            "Every 13D filed with the SEC, market-wide, pulled from EDGAR's daily "
+            "index. A 13D is filed within days of anyone taking an activist stake "
+            "above 5% of a company — much fresher than the quarterly 13F. "
+            "The VPS refreshes this feed automatically every day."
+        )
+
+        feed = feed13d.load_feed()
+        c_refresh, c_lookback = st.columns([1, 1])
+        with c_refresh:
+            refresh_feed = st.button("Refresh feed now")
+        with c_lookback:
+            lookback = st.selectbox(
+                "Lookback (days)", [7, 14, 30, 60, 90], index=2, key="feed_lookback"
+            )
+
+        if refresh_feed:
+            fstatus = st.empty()
+            with st.spinner("Updating feed from EDGAR…"):
+                feed = feed13d.update_feed(
+                    days_back=7,
+                    on_progress=lambda d, m: fstatus.caption(f"{d}: {m}"),
+                )
+            fstatus.caption(f"Done — {feed.get('new_count', 0)} new filings")
+
+        if feed.get("rows"):
+            rows = feed13d.recent_rows(feed, days=int(lookback))
+            st.caption(
+                f"{len(rows)} filings in the last {lookback} days · "
+                f"feed updated {feed.get('updated', '—')}"
+            )
+            df_feed = _feed_df(rows)
+            st.dataframe(
+                df_feed,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Filing": st.column_config.LinkColumn(
+                        "Filing", display_text="open on EDGAR"
+                    ),
+                },
+            )
+            _csv_download("Download feed CSV", df_feed, "feed_13d.csv", "csv_feed13d")
+
+            a1, a2 = st.columns(2)
+            with a1:
+                st.markdown("**Most 13D'd companies**")
+                st.caption("Several filers circling one stock is a strong signal.")
+                df_tgt = pd.DataFrame([
+                    {
+                        "Company": t["company"],
+                        "Ticker": t["ticker"] or "—",
+                        "Filings": t["filings"],
+                        "New 13Ds": t["new_13d"],
+                        "Amendments": t["amendments"],
+                        "# Filers": t["filers"],
+                        "Last filed": t["last_filed"],
+                    }
+                    for t in feed13d.most_targeted(rows)
+                ])
+                st.dataframe(df_tgt, use_container_width=True, hide_index=True)
+            with a2:
+                st.markdown("**Most active filers**")
+                df_flr = pd.DataFrame([
+                    {
+                        "Filer": t["filer"],
+                        "Filings": t["filings"],
+                        "Companies": t["companies"],
+                        "Last filed": t["last_filed"],
+                    }
+                    for t in feed13d.most_active_filers(rows)
+                ])
+                st.dataframe(df_flr, use_container_width=True, hide_index=True)
+        else:
+            st.info(
+                "No feed data yet — click **Refresh feed now** "
+                "(the first pull takes a few minutes)."
+            )
+
+        st.divider()
+        st.subheader("Your funds' 13D filings")
+        st.caption(
+            "13D history for the funds in your universe. "
+            "Amendments (13D/A) signal the position is changing. "
+            "13G is the passive equivalent."
         )
 
         c_load, c_13g, c_limit = st.columns([1, 1, 1])

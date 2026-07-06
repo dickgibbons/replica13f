@@ -6,6 +6,7 @@ that, value is in thousands), and collapses amendments so each period is
 represented by its latest filing.
 """
 from __future__ import annotations
+import html as html_mod
 import os, json, re, time, datetime as dt
 import xml.etree.ElementTree as ET
 import requests
@@ -144,12 +145,47 @@ def filing_subject(cik: str, accession: str) -> str | None:
     subject = None
     for span in re.findall(r'<span class="companyName">([^<]*)', html):
         if "(Subject)" in span:
-            subject = span.split("(Subject)")[0].strip()
+            subject = html_mod.unescape(span.split("(Subject)")[0].strip())
             break
     subjects[accession] = subject
     with open(SUBJECTS_CACHE, "w") as f:
         json.dump(subjects, f)
     return subject
+
+
+PARTIES_CACHE = os.path.join(CACHE, "filing_parties.json")
+
+
+def filing_parties(cik: str, accession: str) -> dict:
+    """Subject company and filer(s) named on a 13D/13G filing (cached).
+
+    Returns {"subject": {"name", "cik"} | None, "filed_by": [names]}."""
+    os.makedirs(CACHE, exist_ok=True)
+    cache = {}
+    if os.path.exists(PARTIES_CACHE):
+        with open(PARTIES_CACHE) as f:
+            cache = json.load(f)
+    if accession in cache:
+        return cache[accession]
+    html = _get(filing_index_url(cik, accession))
+    subject = None
+    filed_by = []
+    for block in re.findall(r'<span class="companyName">(.*?)</span>', html, re.S):
+        text = html_mod.unescape(block.split("<")[0].strip())
+        m = re.search(r"CIK=(\d{10})", block)
+        block_cik = m.group(1) if m else None
+        if "(Subject)" in text:
+            subject = {
+                "name": text.split("(Subject)")[0].strip(),
+                "cik": block_cik,
+            }
+        elif "(Filed by)" in text:
+            filed_by.append(text.split("(Filed by)")[0].strip())
+    parties = {"subject": subject, "filed_by": filed_by}
+    cache[accession] = parties
+    with open(PARTIES_CACHE, "w") as f:
+        json.dump(cache, f)
+    return parties
 
 
 def list_13f_filings(cik: str):

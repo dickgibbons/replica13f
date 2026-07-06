@@ -18,3 +18,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# daily 13D feed (VPS cron writes this)
+data/feed13d.json
+pull_13d.log

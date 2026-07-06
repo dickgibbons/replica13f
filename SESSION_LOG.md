@@ -1,5 +1,21 @@
 # SESSION_LOG
 
+## 2026-07-05 — Market-wide daily 13D feed + cron
+
+- `feed13d.py`: pulls EDGAR daily form indexes (form.YYYYMMDD.idx), keeps
+  every SC/SCHEDULE 13D + amendments with target company, ticker (via
+  company_tickers.json), filer(s) and link; persisted in data/feed13d.json
+  (gitignored — VPS cron owns it), 120-day rolling window
+- `edgar.filing_parties`: subject + filers + subject CIK from the filing
+  index page, cached in cache/filing_parties.json; HTML entities unescaped
+- `scripts/pull_13d.py --days N`: cron entry point, loads .env itself
+- 13D tab now has the daily feed first (lookback selector, refresh button,
+  "Most 13D'd companies" + "Most active filers" tables), universe funds
+  section below
+- Gotchas: daily index lists each filing once per party (group by
+  accession); filer names contain commas so filers are stored as a list
+- VPS cron: daily pull at 11:10 UTC (~7:10am ET)
+
 ## 2026-07-05 — 13D filings tab
 
 - New tab: 13D ownership filings per universe fund (activist >5% stakes,
