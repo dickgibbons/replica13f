@@ -1,11 +1,158 @@
 # SESSION_LOG
 
+## 2026-07-06 — Ticker lookup tab
+
+- New tab: enter a ticker → (1) followed funds holding it per the loaded
+  13F holdings snapshot, (2) all 13D/13G holders (filer names via the
+  shared filing_parties cache), (3) insider open-market buys AND sells
+  from the issuer's last 40 Form 4s
+- `ticker_lookup.py` (one submissions fetch per company);
+  `form4._parse_trades` generalizes the parser to P+S codes
+- Lookup auto-runs when the ticker changes (Enter) — synthetic browser
+  events don't reach Streamlit inputs, so UI verified with
+  streamlit.testing.v1 AppTest (HHH: Pershing $1.19B / 8.7% of book,
+  25 holder filings incl. Pershing 13D/As, 3 insider trades)
+
+## 2026-07-05 — Conviction score + insider batting average
+
+- `form4._parse_purchases` also captures owner_ciks (rptOwnerCik) and the
+  10b5-1 pre-scheduled-plan checkbox (aff10b5One, 2023+)
+- `insider_score.py`:
+  - score_purchase: 0-100 heuristic — size (≤25), stake increase (≤25),
+    role (CEO/CFO 15 → 10% owner 3), rarity (first buy in 2yrs ≤10),
+    dip-buying vs 52wk high (≤10), cluster (+10), track record (+15);
+    10b5-1 planned buys keep 40%
+  - batting_average: buyer's PRIOR purchases → 3-month return vs SPY
+    (n<3 → no record); owner histories = last 60 Form 4s per insider CIK,
+    cached in cache/insider_hist.json (30-day refresh)
+  - enrich_feed scores un-scored rows; wired into pull_insiders.py and
+    the UI refresh button
+- UI: Score / Record / Plan / Why columns, "Sort by conviction" default
+- Feeds regenerated on Mac + VPS (rows needed owner_ciks). Note: the
+  first local pull (pre-rate-limiter) had silently lost ~50 of 63
+  purchases for Jul 2 — same bug as the VPS, now fixed and verified
+
+## 2026-07-05 — Insider buys tab (Form 4 screening à la openinsider)
+
+- `form4.py`: screens every daily Form 4 for open-market purchases
+  (code P / acquired only — grants, exercises, sales excluded); keeps
+  insider, title, shares, wtd avg price, value, owned-after, link;
+  thread pool (4 workers, 0.1s sleep) stays under SEC 10 req/s;
+  "seen" set caches non-purchase accessions so re-pulls are cheap
+- `scripts/pull_insiders.py --days N` cron entry point; VPS cron 11:40 UTC
+- New "Insider buys" tab: lookback + min-value filters, purchases table,
+  cluster-buys table (2+ distinct insiders on one stock)
+- data/feed_form4.json gitignored (cron-owned), 90-day window
+- Verified: CREX CEO+CFO same-day buys ($800k) surfaced as a cluster
+- Post-deploy fix: VPS's fast pipe pushed 4 workers past SEC's 10 req/s;
+  blocked responses read as "no filings" and days were marked done
+  permanently (silent loss). Now: thread-safe global limiter (~7.5/s),
+  retries with backoff, and days only close when fully checked.
+  Lesson: verify backfill logs per-day counts, not just the summary line;
+  and pkill/pgrep -f self-match their own remote shell — use exact
+  process checks
+
+## 2026-07-05 — 13G (short form) added to the daily feed
+
+- FORM_RE now matches SC/SCHEDULE 13G + amendments; rows carry
+  kind: 13D|13G (row_kind() derives it for pre-existing rows)
+- UI: "Form family" selector (13D only default / 13G only / both) applied
+  to the feed table and both aggregate tables; "Filed by your universe
+  funds" always shows both families
+- Feed regenerated (days_done reset required — prior days were scanned
+  under the 13D-only regime); VPS backfilled 45 days
+- Verified: Situational Awareness LP 13G on SharonAI (2026-06-29) captured
+
+## 2026-07-05 — Universe funds surfaced in the daily 13D feed
+
+- `edgar.filing_parties` now records each filer's CIK (old string-only
+  cache entries auto-refetch); feed rows carry `filer_ciks`
+- `feed13d.universe_rows`: feed rows filed by universe funds, matched by
+  CIK (immune to name variations)
+- New "Filed by your universe funds" table in the daily feed section
+- Feed regenerated (schema change); verified: Millstreet/DBD, Viking/LAB,
+  Pershing/HHH matched in the 30-day window
+
+## 2026-07-05 — Market-wide daily 13D feed + cron
+
+- `feed13d.py`: pulls EDGAR daily form indexes (form.YYYYMMDD.idx), keeps
+  every SC/SCHEDULE 13D + amendments with target company, ticker (via
+  company_tickers.json), filer(s) and link; persisted in data/feed13d.json
+  (gitignored — VPS cron owns it), 120-day rolling window
+- `edgar.filing_parties`: subject + filers + subject CIK from the filing
+  index page, cached in cache/filing_parties.json; HTML entities unescaped
+- `scripts/pull_13d.py --days N`: cron entry point, loads .env itself
+- 13D tab now has the daily feed first (lookback selector, refresh button,
+  "Most 13D'd companies" + "Most active filers" tables), universe funds
+  section below
+- Gotchas: daily index lists each filing once per party (group by
+  accession); filer names contain commas so filers are stored as a list
+- VPS cron: daily pull at 11:10 UTC (~7:10am ET)
+
+## 2026-07-05 — 13D filings tab
+
+- New tab: 13D ownership filings per universe fund (activist >5% stakes,
+  filed within days — fresher signal than quarterly 13Fs)
+- `edgar.list_ownership_filings` handles both form eras ("SC 13D" pre-2024,
+  "SCHEDULE 13D" after); `edgar.filing_subject` scrapes the target company
+  from the filing index page, cached in cache/filing_subjects.json
+- `activist.py` builds the snapshot; UI has 13G toggle, per-fund limit,
+  fund filter, EDGAR links, CSV export
+- Verified in browser: 46 filings for the 8-fund universe (Viking/Standard
+  BioTools 13D 2026-06-12, Pershing/Howard Hughes 13D/A, etc.)
+
+## 2026-07-05 — Deployed to VPS + namespace parsing fix
+
+- Deployed Top funds leaderboard to VPS (git pull + service restart)
+- Bug: CAS Investment Partners showed empty holdings. Cause: its filer
+  writes infotable XML with ns1: namespace prefixes; the parser only
+  stripped a default xmlns declaration. Fix in edgar.parse_infotable:
+  strip namespaces from all element tags after parsing (any dialect works)
+- Cleared stale holdings caches (Mac + VPS) that held the empty results
+- Verified on VPS: CAS parses 5 holdings ($1.75B, Carvana-led)
+
 ## 2026-05-16 — Streamlit UI
 
 - Added `runner.py`, `universe.py`, `data/universe.json`, `app.py`, `requirements.txt`
 - Refactored `run.py` to use shared runner; CSV writes to `outputs/replica_ranking.csv`
 - Added `edgar.search_entities()` for SEC company name → CIK lookup
 - Streamlit tabs: Universe (CRUD + search), Results (ranking + CSV export), Fund detail
+
+## 2026-07-05 — Single-year standouts added (40 funds total)
+
+- Added 11 funds: Keywise (HK), Castle Hook, Melqart, Discovery Capital,
+  AQR, Dymon Asia (Singapore), ExodusPoint, Boothbay, Balyasny, Walleye,
+  Schonfeld — all CIKs verified as active 13F-HR filers (May 2026 filings).
+  Keywise files under its HK entity (0001474069), not the stale 0001473434
+- Excluded LMR Partners: no current 13F filer exists (master fund stopped
+  2014; DIFC entity has zero 13F-HRs)
+- Updated 1yr figures: Whale Rock 53, Atreides 46, Jericho 49 (gross),
+  Tiger Global 41, Bridgewater Pure Alpha II 34, D.E. Shaw (Oculus) 28.2
+- Boothbay/Balyasny/Walleye/Schonfeld set to 16.0 as a "mid-to-high teens"
+  placeholder — refine in data/top_funds.json when exact figures known
+- Sort: multi-year track records first (3yr else 5yr), then 1yr-only funds
+
+## 2026-07-05 — Q1 2026 top-10 three-year performers added
+
+- Added 3yr Ann % column to the Top funds table and `data/top_funds.json`
+- Added 9 new funds from the Q1 2026 3yr performance ranking (CAS Investment
+  Partners, Redwood Capital, Peconic Partners, Slate Path, Octahedron, Ratan,
+  Atreides, RV Capital AG, Jericho); Whale Rock (already listed) got its
+  3yr figure. All CIKs verified against EDGAR as active 13F-HR filers —
+  browse-edgar matched wrong/stale entities for Redwood and Peconic, so used
+  EDGAR full-text search (efts.sec.gov) to find the real filers
+- Leaderboard now sorts by best available long-horizon return (3yr, else 5yr)
+- Verified in browser: selecting a new fund adds it to the universe
+
+## 2026-07-05 — Top funds leaderboard tab
+
+- Added `leaderboard.py` + `data/top_funds.json`: ~20 top hedge funds with
+  approximate 1/5/10yr annualized net returns (curated from public reporting —
+  returns are NOT in 13Fs; edit the JSON to update)
+- New **Top funds** tab shown first; selecting rows (checkboxes) auto-adds
+  funds to the universe, with an "In universe" ✓ column
+- Bumped streamlit requirement to >=1.35 (row-selection API)
+- Verified in browser: selection adds fund to `data/universe.json` immediately
 
 ## 2026-05-16 — Holdings and Moves tabs
 

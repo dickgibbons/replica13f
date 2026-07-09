@@ -6,6 +6,7 @@ that, value is in thousands), and collapses amendments so each period is
 represented by its latest filing.
 """
 from __future__ import annotations
+import html as html_mod
 import os, json, re, time, datetime as dt
 import xml.etree.ElementTree as ET
 import requests
@@ -93,6 +94,106 @@ def search_entities(query: str, limit: int = 10) -> list[dict]:
     return out
 
 
+# Ownership filings: 13D = activist stake >5% (filed within days), 13G = passive.
+# EDGAR renamed the forms from "SC 13D" to "SCHEDULE 13D" in late 2024.
+OWNERSHIP_FORMS = {
+    "13D": ("SC 13D", "SCHEDULE 13D"),
+    "13G": ("SC 13G", "SCHEDULE 13G"),
+}
+SUBJECTS_CACHE = os.path.join(CACHE, "filing_subjects.json")
+
+
+def list_ownership_filings(cik: str, kinds: tuple[str, ...] = ("13D",)):
+    """All 13D/13G filings BY this manager (incl. amendments).
+
+    Returns [{form, kind, filing_date, accession}] newest first."""
+    prefixes = tuple(p for k in kinds for p in OWNERSHIP_FORMS[k])
+    cik = str(cik).zfill(10)
+    data = _get(f"https://data.sec.gov/submissions/CIK{cik}.json", as_json=True)
+    blocks = [data["filings"]["recent"]]
+    for extra in data["filings"].get("files", []):
+        blocks.append(_get(f"https://data.sec.gov/submissions/{extra['name']}", as_json=True))
+    out = []
+    for b in blocks:
+        for form, fdate, acc in zip(b["form"], b["filingDate"], b["accessionNumber"]):
+            fu = form.upper()
+            if fu.startswith(prefixes):
+                kind = "13D" if "13D" in fu else "13G"
+                out.append({
+                    "form": form, "kind": kind,
+                    "filing_date": fdate, "accession": acc,
+                })
+    out.sort(key=lambda f: f["filing_date"], reverse=True)
+    return out
+
+
+def filing_index_url(cik: str, accession: str) -> str:
+    acc_nodash = accession.replace("-", "")
+    return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_nodash}/{accession}-index.htm"
+
+
+def filing_subject(cik: str, accession: str) -> str | None:
+    """Target company named on a 13D/13G filing (cached on disk)."""
+    os.makedirs(CACHE, exist_ok=True)
+    subjects = {}
+    if os.path.exists(SUBJECTS_CACHE):
+        with open(SUBJECTS_CACHE) as f:
+            subjects = json.load(f)
+    if accession in subjects:
+        return subjects[accession]
+    html = _get(filing_index_url(cik, accession))
+    subject = None
+    for span in re.findall(r'<span class="companyName">([^<]*)', html):
+        if "(Subject)" in span:
+            subject = html_mod.unescape(span.split("(Subject)")[0].strip())
+            break
+    subjects[accession] = subject
+    with open(SUBJECTS_CACHE, "w") as f:
+        json.dump(subjects, f)
+    return subject
+
+
+PARTIES_CACHE = os.path.join(CACHE, "filing_parties.json")
+
+
+def filing_parties(cik: str, accession: str) -> dict:
+    """Subject company and filer(s) named on a 13D/13G filing (cached).
+
+    Returns {"subject": {"name", "cik"} | None,
+             "filed_by": [{"name", "cik"}]}."""
+    os.makedirs(CACHE, exist_ok=True)
+    cache = {}
+    if os.path.exists(PARTIES_CACHE):
+        with open(PARTIES_CACHE) as f:
+            cache = json.load(f)
+    hit = cache.get(accession)
+    # refetch entries cached before filed_by carried CIKs (plain strings)
+    if hit and not (hit.get("filed_by") and isinstance(hit["filed_by"][0], str)):
+        return hit
+    html = _get(filing_index_url(cik, accession))
+    subject = None
+    filed_by = []
+    for block in re.findall(r'<span class="companyName">(.*?)</span>', html, re.S):
+        text = html_mod.unescape(block.split("<")[0].strip())
+        m = re.search(r"CIK=(\d{10})", block)
+        block_cik = m.group(1) if m else None
+        if "(Subject)" in text:
+            subject = {
+                "name": text.split("(Subject)")[0].strip(),
+                "cik": block_cik,
+            }
+        elif "(Filed by)" in text:
+            filed_by.append({
+                "name": text.split("(Filed by)")[0].strip(),
+                "cik": block_cik,
+            })
+    parties = {"subject": subject, "filed_by": filed_by}
+    cache[accession] = parties
+    with open(PARTIES_CACHE, "w") as f:
+        json.dump(cache, f)
+    return parties
+
+
 def list_13f_filings(cik: str):
     """Return [{period, filing_date, accession, form}] for all 13F-HR / 13F-HR/A."""
     cik = str(cik).zfill(10)
@@ -146,8 +247,12 @@ def parse_infotable(cik: str, accession: str, filing_date: str,
     if not url:
         return []
     raw = _get(url)
-    raw = raw.replace('xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable"', "")
     root = ET.fromstring(raw)
+    # Filers vary in namespace style (default xmlns, ns1: prefixes, or none).
+    # Strip namespaces from every tag so lookups work for all dialects.
+    for el in root.iter():
+        if "}" in el.tag:
+            el.tag = el.tag.split("}", 1)[1]
     fd = dt.date.fromisoformat(filing_date)
     scale = 1 if fd >= DOLLAR_RULE_DATE else 1000
     rows = []
