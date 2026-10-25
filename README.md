@@ -8,11 +8,12 @@ number lifted from a vendor's opaque leaderboard.
 - `edgar.py` — lists 13F-HR/13F-HR/A filings per CIK, parses the information
   table, normalizes the value-unit change (thousands pre-2023-01-03, whole
   dollars after), and collapses amendments to the latest filing per period.
-- `cusip_map.py` — CUSIP→ticker. OpenFIGI (exact, needs `OPENFIGI_KEY`) with a
-  SEC name-match keyless fallback. Persistent disk cache.
-- `prices.py` — adjusted daily closes (Yahoo chart endpoint), disk-cached per
-  symbol, with as-of lookup so a portfolio is priced at the last trading day
-  on/before an anchor date.
+- `cusip_map.py` — CUSIP→ticker. OpenFIGI (exact; works keyless at 25
+  requests/min, `OPENFIGI_KEY` for 10x throughput) with a SEC name-match
+  fallback for CUSIPs OpenFIGI doesn't know. Persistent disk caches.
+- `prices.py` — adjusted daily closes and split history (Yahoo chart
+  endpoint), disk-cached per symbol and refreshed when stale, with as-of
+  lookup so a portfolio is priced at the last trading day on/before a date.
 - `replica.py` — portfolio construction, quarterly rebalance, geometric
   chaining, trailing/annualized returns.
 - `runner.py` / `run.py` — orchestrate across a CIK universe and write
@@ -20,6 +21,12 @@ number lifted from a vendor's opaque leaderboard.
 - `app.py` — Streamlit UI to manage funds, run rankings, and inspect results.
 - `holdings.py` — latest holdings snapshots, cross-fund aggregate, quarter moves.
 - `universe.py` / `data/universe.json` — persistent fund list (name + CIK).
+- `backtest_universe.py` / `data/universe_published.json` — funds with the
+  best published 5y/10y track records, the starting pool for the backtest.
+- `simulator.py` — follow-the-filing copy-trading engine (see below).
+- `metrics.py` — CAGR, volatility, Sharpe, Sortino, Calmar, max drawdown with
+  dates, beta/alpha and up/down capture vs SPY, turnover, win rate.
+- `study.py` — runs the 5y/10y study and writes `outputs/study_<date>/`.
 
 ## Methodology (all configurable in `fund_replica`)
 - `top_n` (default 20): top holdings by reported USD value.
@@ -98,3 +105,69 @@ Caches live in `cache/` and make reruns fast and resumable. Add or edit funds in
 | Holdings | Top holdings per fund + aggregate across universe (eligible-only toggle) |
 | Moves | Quarter-over-quarter increases, decreases, new, and exited positions |
 | Fund detail | Eligibility profile and quick single-fund preview |
+| Backtest | Study results (equity vs SPY, drawdown, metrics, trades) and single-fund runs |
+
+## Copy-trading backtest (`simulator.py`, `study.py`)
+
+Answers: "if I had copied fund X from the day each 13F became public, what
+would my account have done?"
+
+- **Entry**: close of the first trading day after EDGAR acceptance (Eastern
+  time). Nothing trades on information before it is public.
+- **Sells**: when a later 13F shows fewer shares, cut the position by the same
+  fraction (`proportional`, default) or sell it all (`full_exit`). A name that
+  drops out of the 13F is sold.
+- **Buys**: adds and new top-N names are bought only with available cash;
+  when cash is short, all buys are scaled down pro-rata (no forced sells).
+  `cash_policy="rebalance"` instead resets to the new weights every filing.
+- **Data hygiene**: 13F/A "new holdings" amendments are merged into the
+  original report, share counts are split-adjusted between report dates, and
+  positions with no price for 10 trading days are liquidated at the last print.
+- **Costs**: 5 bps per trade by default; idle cash earns nothing unless
+  `cash_yield` is set.
+
+`study.py` runs every fund in `data/universe_published.json` over 5- and
+10-year windows ending at the latest price date, in three variants (base,
+full rebalance, and quarter-end entry — the unrealizable basis that shows
+what the 45-day filing delay costs). It also builds equal-weight blends (all
+funds; eligible long-biased funds only) and a point-in-time blend that each
+February picks the top half of eligible funds by trailing 12-month copy
+return.
+
+```bash
+python3 study.py                         # ~20 funds; first run is slow (EDGAR + OpenFIGI + prices)
+python3 study.py --ciks 0001336528 --top-n 10 --sell-rule full_exit
+python3 -m unittest discover -s tests    # simulator + metrics tests, no network
+```
+
+Outputs: `summary.csv` (one row per fund/window/variant plus blends),
+`nav_*`, `drawdown_*`, `trades_*` CSVs, and `results.json` for the UI.
+
+### First study (`outputs/study_2026-10-25`, top 20, value weights, 5 bps)
+
+| Portfolio | 10y CAGR | 10y max DD | 5y CAGR | 5y max DD |
+|-----------|---------:|-----------:|--------:|----------:|
+| SPY | 15.3% | -33.7% | 12.3% | -24.5% |
+| Equal blend, all 20 copies | 15.1% | -32.5% | 11.4% | -30.5% |
+| Equal blend, eligible copies | 15.3% | -36.6% | 8.4% | -36.3% |
+| Point-in-time top 6 of eligible | 16.4% | -34.5% | 12.9% | -24.3% |
+
+- Copying the whole pool is roughly SPY with beta ~1: the edge is in fund
+  selection, not in copying "top funds" broadly. 9 of 20 copies beat SPY over
+  10y, 10 of 20 over 5y.
+- Best 10y copies: Whale Rock 24.1% (but -56% drawdown), Duquesne 22.8%
+  (-30%), Elliott 21.7% (-15%; long book only, 13F starts 2020), Point72
+  17.9%, RenTech 16.9%, D.E. Shaw 16.6%.
+- The 2021–22 growth crash dominates 5y results: Coatue, Tiger, Lone Pine and
+  Third Point copies are flat to negative with 40–65% drawdowns.
+- The 45-day filing delay costs about 1 point a year (median quarter-end
+  entry minus realistic entry). Full rebalancing beats proportional trims by
+  about 1–1.4 points but with deeper drawdowns.
+- Published fund returns and copy returns are only loosely related; several
+  multi-strat funds the eligibility gate rejects copy well on their long book.
+
+Caveats that must accompany any number shown to a client: funds were chosen
+by today's published returns (hindsight; the point-in-time blend only
+re-selects within that pool), prices come from Yahoo and cover only listed
+tickers (survivorship; not licensed for commercial use), and 13Fs omit
+shorts, cash, options direction and non-US holdings.
