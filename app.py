@@ -563,7 +563,8 @@ def main():
             f"Approximate net returns compiled from public reporting, as of {leaderboard.AS_OF}. "
             "Hedge funds do not publish audited public returns, so treat these as directional — "
             "edit `data/top_funds.json` to update numbers or change the list. "
-            "**Select rows (checkboxes on the left) to add funds to your universe.**"
+            "**Tick “In universe” to add a fund to your universe (the funds the Results, "
+            "Holdings, Moves and Backtest tabs use); untick to remove it.**"
         )
 
         def _rank_key(r):
@@ -573,57 +574,65 @@ def main():
             )
 
         board = sorted(leaderboard.load(), key=_rank_key)
-
-        # Selecting a row reruns the script; process the selection BEFORE
-        # drawing the table so the "In universe" checkmark is current.
-        state = st.session_state.get("top_funds_table")
-        selected_rows = state.get("selection", {}).get("rows", []) if state else []
         universe_ciks = {f["cik"] for f in universe.load()}
-        added = []
-        for i in selected_rows:
-            row = board[i]
-            if row["cik"] and row["cik"] not in universe_ciks:
-                universe.add({
-                    "name": row["name"],
-                    "cik": row["cik"],
-                    "ww_ref_5yr": row.get("ret_5yr"),
-                })
-                universe_ciks.add(row["cik"])
-                added.append(row["name"])
+
+        def _apply_universe_edits(key: str) -> None:
+            added, removed = [], []
+            for i, change in st.session_state[key]["edited_rows"].items():
+                if "In universe" not in change:
+                    continue
+                row = board[int(i)]
+                if change["In universe"] and row["cik"] not in universe_ciks:
+                    universe.add({"name": row["name"], "cik": row["cik"],
+                                  "ww_ref_5yr": row.get("ret_5yr")})
+                    added.append(row["name"])
+                elif not change["In universe"] and row["cik"] in universe_ciks:
+                    universe.remove(row["cik"])
+                    removed.append(row["name"])
+            # Edits are now saved; a fresh key resets the editor to the saved state.
+            st.session_state["top_funds_editor_v"] = st.session_state.get("top_funds_editor_v", 0) + 1
+            st.session_state["top_funds_msg"] = (added, removed)
 
         df_top = pd.DataFrame([
             {
+                "In universe": r["cik"] in universe_ciks,
                 "Fund": r["name"],
                 "1Y (2025)": r.get("ret_1yr"),
                 "3Y ann.": r.get("ret_3yr"),
                 "5Y ann.": r.get("ret_5yr"),
                 "10Y ann.": r.get("ret_10yr"),
-                "In universe": "✓" if r["cik"] and r["cik"] in universe_ciks else "",
                 "CIK": r["cik"],
             }
             for r in board
         ])
-        st.dataframe(
+
+        msg_added, msg_removed = st.session_state.pop("top_funds_msg", ([], []))
+        if msg_added:
+            st.success("Added to universe: " + ", ".join(msg_added))
+        if msg_removed:
+            st.info("Removed from universe: " + ", ".join(msg_removed))
+
+        editor_key = f"top_funds_editor_{st.session_state.get('top_funds_editor_v', 0)}"
+        st.data_editor(
             df_top,
             use_container_width=True,
             hide_index=True,
             height=(len(df_top) + 1) * 35 + 3,
-            on_select="rerun",
-            selection_mode="multi-row",
-            key="top_funds_table",
+            key=editor_key,
+            on_change=_apply_universe_edits,
+            args=(editor_key,),
+            disabled=[c for c in df_top.columns if c != "In universe"],
             column_config={
-                c: st.column_config.NumberColumn(format="%.1f%%")
-                for c in ("1Y (2025)", "3Y ann.", "5Y ann.", "10Y ann.")
+                "In universe": st.column_config.CheckboxColumn(width="small"),
+                **{
+                    c: st.column_config.NumberColumn(format="%.1f%%")
+                    for c in ("1Y (2025)", "3Y ann.", "5Y ann.", "10Y ann.")
+                },
             },
         )
         st.caption("Sorted by 10Y, then 5Y, 3Y, 1Y — click a column header to re-sort. "
-                   "Blank = no credible published figure. 3Y figures are HedgeFollow's "
+                   "None = no credible published figure. 3Y figures are HedgeFollow's "
                    "top-20-holdings returns, not fund returns. Only 13F filers are listed.")
-
-        if added:
-            st.success("Added to universe: " + ", ".join(added))
-        elif selected_rows:
-            st.caption("All selected funds are already in the universe.")
 
     funds = universe.load()
 

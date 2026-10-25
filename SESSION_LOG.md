@@ -9,6 +9,10 @@
 - Whale Rock was already in the old top table (#7 by 10Y = 12.0%); it's #7 here too
 - Removed Haidar (no 13F filer); `leaderboard.load()` now drops any row without a
   CIK, since non-13F funds have no holdings/trades to show. 41 funds remain
+- Replaced row-selection (whose "added" message was hidden below the long table,
+  and which did nothing for funds already in the universe) with an editable
+  "In universe" checkbox column (`st.data_editor`): tick = add, untick = remove,
+  confirmation shown above the table. Verified add/remove in a browser
 
 ## 2026-10-25 — Published-returns refresh + simple 1/5/10y table
 
