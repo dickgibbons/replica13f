@@ -11,12 +11,12 @@ edit data/top_funds.json (created from SEED on first load) — the app reads
 that file, not this SEED list, once the file exists.
 
 A return of null/None means "not publicly reported" and shows as a dash.
-CIKs are verified 13F-HR filers; an empty CIK (Haidar, a macro fund) means
-the manager files no 13F, so it can be ranked but not copied.
+CIKs are verified 13F-HR filers. Rows without a CIK are dropped on load:
+a manager that files no 13F (e.g. macro funds like Haidar) has no holdings
+or trades to show.
 
 1yr figures are calendar-2025 net returns from press/investor-letter reports
 (Bloomberg, Reuters, Institutional Investor, Business Insider, fund letters).
-Haidar 5/10yr are compounded from its reported annual returns.
 """
 from __future__ import annotations
 import json
@@ -74,7 +74,6 @@ SEED = [
     {"name": "Coatue Management", "cik": "0001135730", "ret_1yr": 14.0, "ret_3yr": None, "ret_5yr": 6.0, "ret_10yr": 10.0},
     {"name": "Tiger Global Management", "cik": "0001167483", "ret_1yr": 7.9, "ret_3yr": None, "ret_5yr": 3.0, "ret_10yr": 8.0},
     {"name": "Maverick Capital (Maverick Fund)", "cik": "0000934639", "ret_1yr": 29.4, "ret_3yr": None, "ret_5yr": None, "ret_10yr": None},
-    {"name": "Haidar Jupiter Fund (no 13F)", "cik": "", "ret_1yr": 6.8, "ret_3yr": None, "ret_5yr": 15.1, "ret_10yr": 18.5},
 ]
 
 
@@ -100,6 +99,6 @@ def load() -> list[dict]:
             json.dump(SEED, f, indent=2)
             f.write("\n")
     with open(LEADERBOARD_PATH) as f:
-        rows = json.load(f)
+        rows = [r for r in json.load(f) if r.get("cik")]
     rows.sort(key=_sort_key)
     return rows

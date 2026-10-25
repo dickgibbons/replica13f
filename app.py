@@ -618,8 +618,7 @@ def main():
         )
         st.caption("Sorted by 10Y, then 5Y, 3Y, 1Y — click a column header to re-sort. "
                    "Blank = no credible published figure. 3Y figures are HedgeFollow's "
-                   "top-20-holdings returns, not fund returns. Haidar files no 13F, so it "
-                   "can't be copied.")
+                   "top-20-holdings returns, not fund returns. Only 13F filers are listed.")
 
         if added:
             st.success("Added to universe: " + ", ".join(added))

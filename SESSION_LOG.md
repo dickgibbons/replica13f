@@ -7,6 +7,8 @@
 - Default sort: 10Y, then 5Y, 3Y, 1Y (blanks last); full height, no inner scroll
 - Row-select-to-add still works (selection indexes the sorted list)
 - Whale Rock was already in the old top table (#7 by 10Y = 12.0%); it's #7 here too
+- Removed Haidar (no 13F filer); `leaderboard.load()` now drops any row without a
+  CIK, since non-13F funds have no holdings/trades to show. 41 funds remain
 
 ## 2026-10-25 — Published-returns refresh + simple 1/5/10y table
 
