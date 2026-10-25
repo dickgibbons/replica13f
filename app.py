@@ -566,32 +566,14 @@ def main():
             "**Select rows (checkboxes on the left) to add funds to your universe.**"
         )
 
-        board = leaderboard.load()
+        def _rank_key(r):
+            return tuple(
+                -r[k] if r.get(k) is not None else float("inf")
+                for k in ("ret_10yr", "ret_5yr", "ret_3yr", "ret_1yr")
+            )
 
-        st.markdown("**Long-term track records (1, 5 and 10 years)**")
-        long_term = sorted(
-            (r for r in board if r.get("ret_5yr") is not None or r.get("ret_10yr") is not None),
-            key=lambda r: (-(r.get("ret_10yr") if r.get("ret_10yr") is not None else -1e9),
-                           -(r.get("ret_5yr") if r.get("ret_5yr") is not None else -1e9)),
-        )
-        maverick = [r for r in board if "Maverick" in r["name"] and r not in long_term]
-        st.dataframe(
-            pd.DataFrame([
-                {"Fund": r["name"], "1Y (2025)": r.get("ret_1yr"),
-                 "5Y ann.": r.get("ret_5yr"), "10Y ann.": r.get("ret_10yr")}
-                for r in long_term + maverick
-            ]),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                c: st.column_config.NumberColumn(format="%.1f%%")
-                for c in ("1Y (2025)", "5Y ann.", "10Y ann.")
-            },
-        )
-        st.caption("Blank = no credible published figure. 5Y/10Y are approximate; "
-                   "Haidar files no 13F, so it can't be copied.")
+        board = sorted(leaderboard.load(), key=_rank_key)
 
-        st.markdown("**All tracked funds**")
         # Selecting a row reruns the script; process the selection BEFORE
         # drawing the table so the "In universe" checkmark is current.
         state = st.session_state.get("top_funds_table")
@@ -612,11 +594,11 @@ def main():
         df_top = pd.DataFrame([
             {
                 "Fund": r["name"],
-                "1yr Ann %": r.get("ret_1yr"),
-                "3yr Ann %": r.get("ret_3yr"),
-                "5yr Ann %": r.get("ret_5yr"),
-                "10yr Ann %": r.get("ret_10yr"),
-                "In universe": "✓" if r["cik"] in universe_ciks else "",
+                "1Y (2025)": r.get("ret_1yr"),
+                "3Y ann.": r.get("ret_3yr"),
+                "5Y ann.": r.get("ret_5yr"),
+                "10Y ann.": r.get("ret_10yr"),
+                "In universe": "✓" if r["cik"] and r["cik"] in universe_ciks else "",
                 "CIK": r["cik"],
             }
             for r in board
@@ -625,16 +607,19 @@ def main():
             df_top,
             use_container_width=True,
             hide_index=True,
+            height=(len(df_top) + 1) * 35 + 3,
             on_select="rerun",
             selection_mode="multi-row",
             key="top_funds_table",
             column_config={
-                "1yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
-                "3yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
-                "5yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
-                "10yr Ann %": st.column_config.NumberColumn(format="%.1f%%"),
+                c: st.column_config.NumberColumn(format="%.1f%%")
+                for c in ("1Y (2025)", "3Y ann.", "5Y ann.", "10Y ann.")
             },
         )
+        st.caption("Sorted by 10Y, then 5Y, 3Y, 1Y — click a column header to re-sort. "
+                   "Blank = no credible published figure. 3Y figures are HedgeFollow's "
+                   "top-20-holdings returns, not fund returns. Haidar files no 13F, so it "
+                   "can't be copied.")
 
         if added:
             st.success("Added to universe: " + ", ".join(added))

@@ -1,5 +1,13 @@
 # SESSION_LOG
 
+## 2026-10-25 — Top funds: one merged table
+
+- Replaced the separate "Long-term track records" + "All tracked funds" tables
+  with a single table of all 42 funds (1Y 2025 / 3Y / 5Y / 10Y, In universe, CIK)
+- Default sort: 10Y, then 5Y, 3Y, 1Y (blanks last); full height, no inner scroll
+- Row-select-to-add still works (selection indexes the sorted list)
+- Whale Rock was already in the old top table (#7 by 10Y = 12.0%); it's #7 here too
+
 ## 2026-10-25 — Published-returns refresh + simple 1/5/10y table
 
 - Checked LevelFields "best hedge funds 10 years" list: added Maverick
