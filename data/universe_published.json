@@ -157,5 +157,13 @@
     "published_5y": 18.0,
     "source": "Approximate annualized net returns compiled from public reporting (investor letters, LCH Investments rankings, press coverage)",
     "as_of": "2025-12-31"
+  },
+  {
+    "name": "Maverick Capital (Maverick Fund)",
+    "cik": "0000934639",
+    "published_5y": null,
+    "published_10y": null,
+    "source": "No credible published 5y/10y figure (2025: +29.4%, Institutional Investor)",
+    "as_of": "2025-12-31"
   }
 ]

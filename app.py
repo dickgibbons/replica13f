@@ -568,6 +568,30 @@ def main():
 
         board = leaderboard.load()
 
+        st.markdown("**Long-term track records (1, 5 and 10 years)**")
+        long_term = sorted(
+            (r for r in board if r.get("ret_5yr") is not None or r.get("ret_10yr") is not None),
+            key=lambda r: (-(r.get("ret_10yr") if r.get("ret_10yr") is not None else -1e9),
+                           -(r.get("ret_5yr") if r.get("ret_5yr") is not None else -1e9)),
+        )
+        maverick = [r for r in board if "Maverick" in r["name"] and r not in long_term]
+        st.dataframe(
+            pd.DataFrame([
+                {"Fund": r["name"], "1Y (2025)": r.get("ret_1yr"),
+                 "5Y ann.": r.get("ret_5yr"), "10Y ann.": r.get("ret_10yr")}
+                for r in long_term + maverick
+            ]),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                c: st.column_config.NumberColumn(format="%.1f%%")
+                for c in ("1Y (2025)", "5Y ann.", "10Y ann.")
+            },
+        )
+        st.caption("Blank = no credible published figure. 5Y/10Y are approximate; "
+                   "Haidar files no 13F, so it can't be copied.")
+
+        st.markdown("**All tracked funds**")
         # Selecting a row reruns the script; process the selection BEFORE
         # drawing the table so the "In universe" checkmark is current.
         state = st.session_state.get("top_funds_table")
@@ -576,7 +600,7 @@ def main():
         added = []
         for i in selected_rows:
             row = board[i]
-            if row["cik"] not in universe_ciks:
+            if row["cik"] and row["cik"] not in universe_ciks:
                 universe.add({
                     "name": row["name"],
                     "cik": row["cik"],

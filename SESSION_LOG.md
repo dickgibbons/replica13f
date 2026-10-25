@@ -1,5 +1,21 @@
 # SESSION_LOG
 
+## 2026-10-25 — Published-returns refresh + simple 1/5/10y table
+
+- Checked LevelFields "best hedge funds 10 years" list: added Maverick
+  (CIK 0000934639) and Haidar Jupiter (no 13F filer — ranked, not copyable);
+  Millstreet (credit, no equity book) and Melvin (closed 2022) skipped
+- Checked HedgeFollow top-20 (3yr return of top-20 13F stocks, not fund
+  returns; site is Cloudflare-gated, read via browser): 6 already tracked,
+  14 new names (Gendell/Tontine, FengHe, Spruce House, Caligan, BIT Capital,
+  Value Aligned, CloudAlpha, Fairmount, Greenoaks, Lynx1, Tairen, Helikon,
+  Shannon River, Quadrature) not added
+- 1yr column was a 2024/2025 mix; now calendar-2025 from press/letters
+  (e.g. Citadel 15.1 -> 10.2, Whale Rock 53 -> 27, RIEF 22.7 -> -6.7);
+  blanks where no credible figure (Duquesne, Appaloosa, Elliott)
+- Haidar 5y 15.1% / 10y 18.5% compounded from reported annual returns
+- Top funds tab: new "Long-term track records" table (1Y/5Y/10Y)
+
 ## 2026-10-25 — 13F copy-trading backtest engine (Phase 1)
 
 - `backtest_universe.py` + `data/universe_published.json`: 20 funds with the

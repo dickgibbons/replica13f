@@ -26,7 +26,7 @@
   {
     "name": "Whale Rock Capital Mgmt",
     "cik": "0001387322",
-    "ret_1yr": 53.0,
+    "ret_1yr": 27.0,
     "ret_3yr": 44.0,
     "ret_5yr": 4.0,
     "ret_10yr": 12.0
@@ -98,7 +98,7 @@
   {
     "name": "Melqart Asset Management",
     "cik": "0001712901",
-    "ret_1yr": 45.0,
+    "ret_1yr": 45.1,
     "ret_3yr": null,
     "ret_5yr": null,
     "ret_10yr": null
@@ -114,7 +114,7 @@
   {
     "name": "AQR Capital Mgmt (Adaptive/Apex)",
     "cik": "0001167557",
-    "ret_1yr": 24.4,
+    "ret_1yr": 19.6,
     "ret_3yr": null,
     "ret_5yr": null,
     "ret_10yr": null
@@ -146,7 +146,7 @@
   {
     "name": "Balyasny Asset Management",
     "cik": "0001218710",
-    "ret_1yr": 16.0,
+    "ret_1yr": 16.7,
     "ret_3yr": null,
     "ret_5yr": null,
     "ret_10yr": null
@@ -170,7 +170,7 @@
   {
     "name": "Citadel Advisors (Wellington)",
     "cik": "0001423053",
-    "ret_1yr": 15.1,
+    "ret_1yr": 10.2,
     "ret_3yr": null,
     "ret_5yr": 19.5,
     "ret_10yr": 19.0
@@ -178,7 +178,7 @@
   {
     "name": "Pershing Square Capital Mgmt",
     "cik": "0001336528",
-    "ret_1yr": 10.2,
+    "ret_1yr": 20.9,
     "ret_3yr": null,
     "ret_5yr": 19.8,
     "ret_10yr": 11.5
@@ -186,7 +186,7 @@
   {
     "name": "Duquesne Family Office",
     "cik": "0001536411",
-    "ret_1yr": 25.0,
+    "ret_1yr": null,
     "ret_3yr": null,
     "ret_5yr": 18.0,
     "ret_10yr": null
@@ -194,7 +194,7 @@
   {
     "name": "Appaloosa LP",
     "cik": "0001656456",
-    "ret_1yr": 18.0,
+    "ret_1yr": null,
     "ret_3yr": null,
     "ret_5yr": 17.0,
     "ret_10yr": 13.0
@@ -210,7 +210,7 @@
   {
     "name": "TCI Fund Management",
     "cik": "0001647251",
-    "ret_1yr": 15.0,
+    "ret_1yr": 27.0,
     "ret_3yr": null,
     "ret_5yr": 14.5,
     "ret_10yr": 15.5
@@ -218,7 +218,7 @@
   {
     "name": "Greenlight Capital",
     "cik": "0001079114",
-    "ret_1yr": 10.5,
+    "ret_1yr": 9.0,
     "ret_3yr": null,
     "ret_5yr": 14.5,
     "ret_10yr": 6.5
@@ -226,7 +226,7 @@
   {
     "name": "Millennium Management",
     "cik": "0001273087",
-    "ret_1yr": 15.1,
+    "ret_1yr": 10.5,
     "ret_3yr": null,
     "ret_5yr": 13.5,
     "ret_10yr": 12.5
@@ -234,7 +234,7 @@
   {
     "name": "Point72 Asset Management",
     "cik": "0001603466",
-    "ret_1yr": 19.0,
+    "ret_1yr": 17.5,
     "ret_3yr": null,
     "ret_5yr": 13.0,
     "ret_10yr": 11.5
@@ -242,7 +242,7 @@
   {
     "name": "Third Point LLC",
     "cik": "0001040273",
-    "ret_1yr": 24.2,
+    "ret_1yr": 8.9,
     "ret_3yr": null,
     "ret_5yr": 12.0,
     "ret_10yr": 9.0
@@ -250,7 +250,7 @@
   {
     "name": "Viking Global Investors",
     "cik": "0001103804",
-    "ret_1yr": 13.9,
+    "ret_1yr": 8.6,
     "ret_3yr": null,
     "ret_5yr": 11.5,
     "ret_10yr": 10.5
@@ -258,7 +258,7 @@
   {
     "name": "Renaissance Technologies (RIEF)",
     "cik": "0001037389",
-    "ret_1yr": 22.7,
+    "ret_1yr": -6.7,
     "ret_3yr": null,
     "ret_5yr": 11.0,
     "ret_10yr": 10.0
@@ -266,7 +266,7 @@
   {
     "name": "Elliott Investment Management",
     "cik": "0001791786",
-    "ret_1yr": 10.5,
+    "ret_1yr": null,
     "ret_3yr": null,
     "ret_5yr": 11.0,
     "ret_10yr": 10.0
@@ -274,7 +274,7 @@
   {
     "name": "Two Sigma Investments",
     "cik": "0001179392",
-    "ret_1yr": 12.0,
+    "ret_1yr": 10.9,
     "ret_3yr": null,
     "ret_5yr": 9.5,
     "ret_10yr": 10.0
@@ -282,7 +282,7 @@
   {
     "name": "Lone Pine Capital",
     "cik": "0001061165",
-    "ret_1yr": 30.0,
+    "ret_1yr": 23.0,
     "ret_3yr": null,
     "ret_5yr": 7.5,
     "ret_10yr": 9.0
@@ -290,7 +290,7 @@
   {
     "name": "Baupost Group",
     "cik": "0001061768",
-    "ret_1yr": 10.0,
+    "ret_1yr": 12.5,
     "ret_3yr": null,
     "ret_5yr": 7.0,
     "ret_10yr": 6.0
@@ -306,7 +306,7 @@
   {
     "name": "Coatue Management",
     "cik": "0001135730",
-    "ret_1yr": 20.0,
+    "ret_1yr": 14.0,
     "ret_3yr": null,
     "ret_5yr": 6.0,
     "ret_10yr": 10.0
@@ -314,9 +314,25 @@
   {
     "name": "Tiger Global Management",
     "cik": "0001167483",
-    "ret_1yr": 41.0,
+    "ret_1yr": 7.9,
     "ret_3yr": null,
     "ret_5yr": 3.0,
     "ret_10yr": 8.0
+  },
+  {
+    "name": "Maverick Capital (Maverick Fund)",
+    "cik": "0000934639",
+    "ret_1yr": 29.4,
+    "ret_3yr": null,
+    "ret_5yr": null,
+    "ret_10yr": null
+  },
+  {
+    "name": "Haidar Jupiter Fund (no 13F)",
+    "cik": "",
+    "ret_1yr": 6.8,
+    "ret_3yr": null,
+    "ret_5yr": 15.1,
+    "ret_10yr": 18.5
   }
 ]
