@@ -1,10 +1,11 @@
 """CUSIP -> US ticker resolution.
 
-Primary path: OpenFIGI (exact, CUSIP-keyed) when OPENFIGI_KEY is set.
+Primary path: OpenFIGI (exact, CUSIP-keyed). Works without a key at a low
+rate limit; set OPENFIGI_KEY for 10x throughput.
 Fallback path: fuzzy match the 13F issuer name against the SEC public
-company_tickers file. The fallback is approximate -- it collapses share
-classes and misses post-filing renames/M&A -- so production should always
-run with an OpenFIGI key. Both paths share one persistent disk cache.
+company_tickers file, used only when OpenFIGI has no match. The fallback is
+approximate -- it collapses share classes and misses post-filing renames/M&A.
+Each path has its own persistent disk cache.
 """
 from __future__ import annotations
 import os, json, time, re
@@ -12,6 +13,7 @@ import requests
 
 CACHE = os.path.join(os.path.dirname(__file__), "cache")
 MAP_PATH = os.path.join(CACHE, "cusip_ticker.json")
+FIGI_PATH = os.path.join(CACHE, "cusip_figi.json")
 SEC_TICKERS = os.path.join(CACHE, "sec_company_tickers.json")
 KEY = os.environ.get("OPENFIGI_KEY")
 FIGI_URL = "https://api.openfigi.com/v3/mapping"
@@ -42,34 +44,51 @@ def _save(obj, path):
     os.replace(tmp, path)
 
 # ---- OpenFIGI ------------------------------------------------------------
-def _figi(cusips, cache):
-    todo = [c for c in cusips if c not in cache]
-    if not todo or not KEY:
+# Keyless access is limited to 10 jobs/request and 25 requests/minute.
+FIGI_BATCH, FIGI_PAUSE = (100, 0.3) if KEY else (10, 2.5)
+
+
+def _figi(cusips, figi_cache):
+    """Fill figi_cache {cusip: ticker or ""} ("" = OpenFIGI has no match)."""
+    todo = [c for c in cusips if c not in figi_cache]
+    if not todo:
         return
-    headers = {"Content-Type": "application/json", "X-OPENFIGI-APIKEY": KEY}
-    for i in range(0, len(todo), 100):
-        chunk = todo[i:i + 100]
-        body = [{"idType": "ID_CUSIP", "value": c} for c in chunk]
-        try:
-            r = requests.post(FIGI_URL, headers=headers, json=body, timeout=40)
-            if r.status_code == 429:
-                time.sleep(10)
+    headers = {"Content-Type": "application/json"}
+    if KEY:
+        headers["X-OPENFIGI-APIKEY"] = KEY
+    for i in range(0, len(todo), FIGI_BATCH):
+        chunk = todo[i:i + FIGI_BATCH]
+        body = [{"idType": "ID_CUSIP", "idValue": c} for c in chunk]
+        res = None
+        for attempt in range(3):
+            try:
                 r = requests.post(FIGI_URL, headers=headers, json=body, timeout=40)
-            r.raise_for_status()
-            res = r.json()
-        except requests.RequestException:
+                if r.status_code == 429:
+                    time.sleep(15 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                res = r.json()
+                break
+            except requests.RequestException:
+                time.sleep(5)
+        if res is None:
             continue
         for c, item in zip(chunk, res):
-            data = item.get("data") if isinstance(item, dict) else None
-            tk = None
+            if not isinstance(item, dict):
+                continue
+            err = item.get("error") or item.get("warning")
+            if err and "no identifier found" not in str(err).lower():
+                continue
+            data = item.get("data")
+            tk = ""
             if data:
                 us = [d for d in data if d.get("exchCode") in
                       ("US", "UN", "UW", "UQ", "UR", "UA")]
                 pool = us or data
-                tk = pool[0].get("ticker")
-            cache[c] = tk
-        _save(cache, MAP_PATH)
-        time.sleep(0.3)
+                tk = (pool[0].get("ticker") or "").replace("/", "-")
+            figi_cache[c] = tk
+        _save(figi_cache, FIGI_PATH)
+        time.sleep(FIGI_PAUSE)
 
 # ---- SEC name-match fallback --------------------------------------------
 def _sec_index():
@@ -97,7 +116,7 @@ def _name_match(holdings, cache):
         tk = idx.get(key)
         if tk is None and key:
             parts = key.split()
-            for n in range(len(parts) - 1, 0, -1):
+            for n in range(len(parts) - 1, 1, -1):
                 tk = idx.get(" ".join(parts[:n]))
                 if tk:
                     break
@@ -111,13 +130,21 @@ def resolve_holdings(all_holdings):
     for h in all_holdings:
         uniq.setdefault(h["cusip"].upper(), h.get("issuer", ""))
     cusips = list(uniq)
-    _figi(cusips, cache)
+    figi = _load(FIGI_PATH)
+    _figi(cusips, figi)
+    # OpenFIGI suffixes retired tickers with "*" (e.g. "HHC*"); prefer the
+    # issuer's current SEC ticker for those.
+    def firm(c):
+        tk = figi.get(c) or ""
+        return tk if tk and not tk.endswith("*") else ""
+
     missing = [{"cusip": c, "issuer": uniq[c]} for c in cusips
-               if cache.get(c) is None]
+               if not firm(c) and cache.get(c) is None]
     if missing:
         _name_match(missing, cache)
         _save(cache, MAP_PATH)
-    return {c: cache.get(c) for c in cusips}
+    return {c: firm(c) or cache.get(c) or (figi.get(c) or "").rstrip("*") or None
+            for c in cusips}
 
 if __name__ == "__main__":
     sample = [

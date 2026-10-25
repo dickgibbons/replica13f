@@ -26,15 +26,24 @@ def _norm_cik(cik: str) -> str:
     return digits.zfill(10)
 
 
-def _validate(fund: dict) -> dict:
+OPTIONAL_FLOATS = ("ww_ref_5yr", "published_5y", "published_10y")
+OPTIONAL_STRINGS = ("source", "as_of")
+
+
+def validate(fund: dict) -> dict:
     name = (fund.get("name") or "").strip()
     if not name:
         raise ValueError("Fund name is required")
     cik = _norm_cik(fund["cik"])
     out = {"name": name, "cik": cik}
-    ref = fund.get("ww_ref_5yr")
-    if ref is not None and ref != "":
-        out["ww_ref_5yr"] = float(ref)
+    for key in OPTIONAL_FLOATS:
+        val = fund.get(key)
+        if val is not None and val != "":
+            out[key] = float(val)
+    for key in OPTIONAL_STRINGS:
+        val = (fund.get(key) or "").strip()
+        if val:
+            out[key] = val
     return out
 
 
@@ -47,7 +56,7 @@ def load() -> list[dict]:
 
 def save(funds: list[dict]) -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
-    validated = [_validate(f) for f in funds]
+    validated = [validate(f) for f in funds]
     with open(UNIVERSE_PATH, "w") as f:
         json.dump(validated, f, indent=2)
         f.write("\n")
@@ -59,7 +68,7 @@ def bootstrap_from_seed() -> list[dict]:
 
 
 def add(fund: dict) -> list[dict]:
-    row = _validate(fund)
+    row = validate(fund)
     funds = load()
     funds = [f for f in funds if f["cik"] != row["cik"]]
     funds.append(row)
@@ -69,7 +78,7 @@ def add(fund: dict) -> list[dict]:
 
 def update(cik: str, fund: dict) -> list[dict]:
     cik = _norm_cik(cik)
-    row = _validate({**fund, "cik": cik})
+    row = validate({**fund, "cik": cik})
     funds = load()
     found = False
     out = []

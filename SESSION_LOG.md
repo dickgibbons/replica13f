@@ -1,5 +1,36 @@
 # SESSION_LOG
 
+## 2026-10-25 — 13F copy-trading backtest engine (Phase 1)
+
+- `backtest_universe.py` + `data/universe_published.json`: 20 funds with the
+  best published 5y/10y returns (from leaderboard data; universe.validate
+  now accepts published_5y/10y, source, as_of)
+- `edgar.py`: acceptanceDateTime captured; 13F-HR/A NEW HOLDINGS amendments
+  merged into the original report (amendment_type cached); CUSIPs collapsed;
+  44-quarter history cached as holdings_v2_*
+- `prices.py`: split history, stale-cache refresh, 2010+ history
+- `simulator.py`: buy at next close after EDGAR acceptance (ET), proportional
+  trims / exits / cash-funded adds and new names with pro-rata scaling,
+  rebalance and quarter-end variants, costs, stale-price liquidation,
+  split-adjusted share ratios, mapped-share coverage
+- `metrics.py`: CAGR, vol, Sharpe, Sortino, Calmar, max DD w/ dates,
+  beta/alpha, capture, calendar years, rolling 12m, turnover, win rate
+- `study.py`: 5y/10y × base/rebalance/period_end per fund, equal blends,
+  point-in-time top-half selection; outputs/study_2026-10-25 (25 min first
+  run, mostly keyless OpenFIGI)
+- `cusip_map.py` fixes: OpenFIGI request used `value` instead of `idValue`
+  (every lookup had silently failed); now works keyless; retired "*"
+  tickers prefer SEC name match; name match needs >= 2 tokens (AIR PRODS
+  had mapped to AIIR). Cleared the old name-match cache
+- Backtest tab in app.py (study browser + single-fund run), verified with
+  streamlit AppTest in a new local .venv
+- tests/: 34 unittest cases (timing/no look-ahead, trims, exits, pro-rata
+  buys, splits, windows, metrics, point-in-time); caught a full_exit
+  sell-then-rebuy bug
+- Finding: copying the whole pool ~= SPY (15.1% vs 15.3% 10y); edge is in
+  selection (Duquesne, Whale Rock, Elliott, Point72); filing delay ~1pt/yr
+- Not deployed to VPS / not committed yet
+
 ## 2026-07-06 — Ticker lookup tab
 
 - New tab: enter a ticker → (1) followed funds holding it per the loaded

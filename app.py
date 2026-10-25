@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 import activist
+import backtest_universe
 import classify
 import edgar
 import feed13d
@@ -15,7 +16,10 @@ import form4
 import holdings as holdings_mod
 import insider_score
 import leaderboard
+import metrics
 import runner
+import simulator
+import study
 import ticker_lookup
 import universe
 
@@ -222,6 +226,256 @@ def _csv_download(label: str, df: pd.DataFrame, filename: str, key: str) -> None
     st.download_button(label, buf.getvalue(), file_name=filename, mime="text/csv", key=key)
 
 
+def _pct(val, digits: int = 1) -> str:
+    if val is None or (isinstance(val, float) and val != val):
+        return "—"
+    return f"{val * 100:.{digits}f}%"
+
+
+def _num(val, digits: int = 2) -> str:
+    if val is None or (isinstance(val, float) and val != val):
+        return "—"
+    return f"{val:.{digits}f}"
+
+
+@st.cache_data(show_spinner=False)
+def _load_study(path: str, mtime: float) -> dict:
+    return study.load_results(path)
+
+
+def _study_dirs() -> list[str]:
+    root = study.OUT_ROOT
+    if not os.path.isdir(root):
+        return []
+    return sorted(
+        (d for d in os.listdir(root)
+         if d.startswith("study_") and os.path.exists(os.path.join(root, d, "results.json"))),
+        reverse=True,
+    )
+
+
+def _study_summary_df(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "Portfolio": r["name"],
+            "Eligible": {True: "yes", False: "no"}.get(r.get("eligible"), "—")
+            if r["scope"] == "fund" else "blend",
+            "Published 5y": _pct(r.get("published_5y") / 100) if r.get("published_5y") is not None else "—",
+            "Published 10y": _pct(r.get("published_10y") / 100) if r.get("published_10y") is not None else "—",
+            "Copy CAGR": _pct(r.get("cagr")),
+            "SPY CAGR": _pct(r.get("spy_cagr")),
+            "Excess": _pct(r.get("excess_cagr")),
+            "Max DD": _pct(r.get("max_drawdown")),
+            "Sharpe": _num(r.get("sharpe")),
+            "Sortino": _num(r.get("sortino")),
+            "Calmar": _num(r.get("calmar")),
+            "Beta": _num(r.get("beta")),
+            "Coverage": _pct(r.get("coverage"), 0),
+            "Late start": "yes" if r.get("late_start") else "",
+        }
+        for r in rows
+    ])
+
+
+def _metrics_df(s: dict) -> pd.DataFrame:
+    items = [
+        ("Start", s.get("start")), ("End", s.get("end")),
+        ("Ending value", _fmt_usd(s.get("end_value"))),
+        ("Total return", _pct(s.get("total_return"))),
+        ("CAGR", _pct(s.get("cagr"))),
+        ("SPY CAGR", _pct(s.get("spy_cagr"))),
+        ("Volatility", _pct(s.get("volatility"))),
+        ("Sharpe", _num(s.get("sharpe"))),
+        ("Sortino", _num(s.get("sortino"))),
+        ("Calmar", _num(s.get("calmar"))),
+        ("Max drawdown", _pct(s.get("max_drawdown"))),
+        ("Drawdown peak / trough", f"{s.get('peak') or '—'} / {s.get('trough') or '—'}"),
+        ("Recovered", s.get("recovery") or "not yet"),
+        ("Beta vs SPY", _num(s.get("beta"))),
+        ("Alpha vs SPY (ann.)", _pct(s.get("alpha"))),
+        ("Up / down capture", f"{_num(s.get('up_capture'))} / {_num(s.get('down_capture'))}"),
+        ("Best / worst year", f"{_pct(s.get('best_year'))} / {_pct(s.get('worst_year'))}"),
+        ("Turnover (ann.)", _pct(s.get("turnover"), 0)),
+        ("Win rate (closed)", _pct(s.get("win_rate"), 0)),
+        ("Avg holding (days)", _num(s.get("avg_holding_days"), 0)),
+    ]
+    return pd.DataFrame(items, columns=["Metric", "Value"])
+
+
+def _render_backtest_series(nav: list, spy: list, summary: dict, trades: list,
+                            key: str) -> None:
+    if not nav:
+        st.info("No NAV series.")
+        return
+    df = pd.DataFrame(nav, columns=["date", "Copy portfolio"]).set_index("date")
+    if spy:
+        df = df.join(pd.DataFrame(spy, columns=["date", "SPY"]).set_index("date"), how="left")
+    df.index = pd.to_datetime(df.index)
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown("**Growth of the account vs SPY**")
+        st.line_chart(df)
+        st.markdown("**Drawdown (underwater)**")
+        dd = pd.DataFrame(metrics.drawdown_series(nav), columns=["date", "Copy portfolio"])
+        if spy:
+            sdd = pd.DataFrame(metrics.drawdown_series(spy), columns=["date", "SPY"])
+            dd = dd.merge(sdd, on="date", how="left")
+        dd["date"] = pd.to_datetime(dd["date"])
+        st.area_chart(dd.set_index("date"))
+    with c2:
+        st.dataframe(_metrics_df(summary), use_container_width=True, hide_index=True)
+    nav_out = df.reset_index().rename(columns={"index": "date"})
+    _csv_download("Download NAV CSV", nav_out, f"nav_{key}.csv", key=f"nav_dl_{key}")
+    if trades:
+        tdf = pd.DataFrame([
+            {
+                "Date": t["date"], "Filing period": t.get("period", ""),
+                "Ticker": t["ticker"], "Side": t["side"], "Reason": t["reason"],
+                "Shares": _fmt_shares(t["units"]), "Price": f"${t['price']:,.2f}",
+                "Notional": _fmt_usd(t["notional"]),
+            }
+            for t in trades
+        ])
+        with st.expander(f"Trade ledger ({len(trades)} trades)"):
+            st.dataframe(tdf, use_container_width=True, hide_index=True)
+        _csv_download("Download trade ledger CSV", pd.DataFrame(trades),
+                      f"trades_{key}.csv", key=f"trades_dl_{key}")
+
+
+def _run_single_backtest(cik: str, years: int, rules: "simulator.Rules",
+                         capital: float) -> dict:
+    import datetime as dt
+    from prices import PriceBook
+    pb = PriceBook(study.PRICE_START, dt.date.today())
+    spy = pb.series(study.BENCH)
+    calendar = [d for d, _ in spy]
+    end = calendar[-1]
+    start = study.window_start(calendar, end, years)
+    hp, tmap = study.load_fund(cik, rules.top_n)
+    events = simulator.build_events(hp, tmap, calendar, rules, pb.splits, pb.series)
+    res = simulator.simulate(events, calendar, pb.series, rules, start=start,
+                             end=end, capital=capital)
+    days = calendar[calendar.index(start):]
+    spy_nav = study.bench_nav(spy, days, capital)
+    summary = metrics.summarize(res.nav, spy_nav, res.trades, res.closed)
+    s_spy = metrics.summarize(spy_nav)
+    summary["spy_cagr"] = s_spy.get("cagr")
+    return {"result": res, "spy": spy_nav, "summary": summary,
+            "coverage": study.avg_coverage(res)}
+
+
+def _render_backtest_tab() -> None:
+    st.subheader("Copy-trading backtest")
+    st.caption(
+        "Hypothetical results. Each copy buys at the close of the first trading day after "
+        "the 13F is public, trims by the same fraction the fund cut its shares, and adds or "
+        "buys new names only with available cash. Funds were chosen by today's published "
+        "track records (hindsight), prices cover only currently listed tickers "
+        "(survivorship), and 13Fs omit shorts, cash and non-US holdings."
+    )
+
+    dirs = _study_dirs()
+    if not dirs:
+        st.info("No study results yet. Run `python study.py` to generate them, "
+                "or use the single-fund backtest below.")
+    else:
+        sel_dir = st.selectbox("Study run", dirs, key="bt_dir")
+        path = os.path.join(study.OUT_ROOT, sel_dir)
+        res = _load_study(path, os.path.getmtime(os.path.join(path, "results.json")))
+        rules = res.get("rules", {})
+        st.caption(
+            f"As of {res.get('as_of')} · top {rules.get('top_n')} · {rules.get('weighting')} "
+            f"weights · {rules.get('sell_rule')} sells · {rules.get('cost_bps')} bps costs · "
+            f"start {_fmt_usd(res.get('capital'))}"
+        )
+        c1, c2 = st.columns(2)
+        window = c1.radio("Window", [10, 5], horizontal=True, key="bt_window",
+                          format_func=lambda y: f"{y} years")
+        variant = c2.radio("Variant", ["base", "rebalance", "period_end"],
+                           horizontal=True, key="bt_variant",
+                           format_func={"base": "Follow filings (base)",
+                                        "rebalance": "Full rebalance",
+                                        "period_end": "Quarter-end (unrealizable)"}.get)
+        summary = res.get("summary", [])
+        rows = [r for r in summary if r.get("window") == window
+                and (r.get("variant") == variant or r.get("scope") == "combined")]
+        rows.sort(key=lambda r: (r["scope"] != "combined", -(r.get("cagr") or -9)))
+        st.dataframe(_study_summary_df(rows), use_container_width=True, hide_index=True)
+        _csv_download("Download summary CSV", pd.DataFrame(summary),
+                      f"{sel_dir}_summary.csv", key="bt_summary_dl")
+
+        fund_rows = [r for r in summary if r.get("window") == window and r["scope"] == "fund"]
+        if fund_rows:
+            with st.expander("Rule and timing comparison (CAGR by variant)"):
+                piv = pd.DataFrame(fund_rows).pivot_table(
+                    index="name", columns="variant", values="cagr", aggfunc="first")
+                st.dataframe(piv.map(_pct) if hasattr(piv, "map") else piv.applymap(_pct),
+                             use_container_width=True)
+                st.caption("Quarter-end entry is not achievable (13Fs are filed up to 45 days "
+                           "later); the gap to the base variant is the cost of the delay.")
+
+        skipped = [f for f in res.get("funds", []) if f.get("error")]
+        if skipped:
+            st.caption("Not simulated: " + "; ".join(f"{f['name']} ({f['error']})" for f in skipped))
+
+        series = [s for s in res.get("series", []) if s.get("window") == window]
+        if series:
+            series.sort(key=lambda s: (s["cik"] not in ("combined_eligible", "combined_all",
+                                                        "point_in_time"), s["name"]))
+            pick = st.selectbox("Portfolio detail", range(len(series)),
+                                format_func=lambda i: series[i]["name"], key="bt_series")
+            s = series[pick]
+            _render_backtest_series(s["nav"], s.get("spy", []), s.get("summary", {}),
+                                    s.get("trades", []), key=f"{s['cik']}_{window}y")
+            if s.get("picks"):
+                with st.expander("Point-in-time selections"):
+                    names = {f["cik"]: f["name"] for f in res.get("funds", [])}
+                    st.dataframe(pd.DataFrame([
+                        {"Date": p["date"],
+                         "Chosen": ", ".join(names.get(c, c) for c in p["chosen"])}
+                        for p in s["picks"]
+                    ]), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Run a single fund")
+    pool = {f["cik"]: f["name"] for f in backtest_universe.load()}
+    for f in universe.load():
+        pool.setdefault(f["cik"], f["name"])
+    if not pool:
+        st.info("No funds available.")
+        return
+    ciks = list(pool)
+    c1, c2, c3 = st.columns(3)
+    cik = c1.selectbox("Fund", ciks, format_func=lambda c: f"{pool[c]} ({c})", key="bt_cik")
+    years = c2.selectbox("Years", [10, 5, 3], key="bt_years")
+    capital = c3.number_input("Starting capital", min_value=1_000, value=100_000,
+                              step=10_000, key="bt_capital")
+    c4, c5, c6, c7 = st.columns(4)
+    top = c4.number_input("Top N", min_value=1, max_value=50, value=20, key="bt_topn")
+    wt = c5.selectbox("Weighting", ["value", "equal"], key="bt_wt")
+    sell = c6.selectbox("Sell rule", ["proportional", "full_exit"], key="bt_sell")
+    cost = c7.number_input("Cost (bps)", min_value=0.0, value=5.0, step=1.0, key="bt_cost")
+    if st.button("Run backtest", type="primary", key="bt_run"):
+        rules = simulator.Rules(top_n=int(top), weighting=wt, sell_rule=sell, cost_bps=cost)
+        with st.spinner("Fetching filings and prices (first run for a fund can take minutes)…"):
+            try:
+                st.session_state["bt_single"] = {
+                    "cik": cik, "years": years,
+                    **_run_single_backtest(cik, int(years), rules, float(capital)),
+                }
+            except Exception as e:
+                st.error(f"Backtest failed: {e}")
+    out = st.session_state.get("bt_single")
+    if out and out["cik"] == cik:
+        r = out["result"]
+        if r.late_start:
+            st.warning(f"First usable filing executes {r.first_event}; "
+                       "the account holds cash until then.")
+        st.caption(f"Average tradable coverage of the fund's top-N value: {_pct(out['coverage'], 0)}")
+        _render_backtest_series(r.nav, out["spy"], out["summary"], r.trades,
+                                key=f"single_{cik}_{out['years']}y")
+
+
 def _run_with_progress(funds, top_n, weighting, years):
     progress = st.progress(0.0, text="Starting…")
     status = st.empty()
@@ -295,10 +549,13 @@ def main():
         run_clicked = st.button("Run ranking", type="primary", use_container_width=True)
 
     (tab_top, tab_univ, tab_results, tab_holdings, tab_moves, tab_13d,
-     tab_insider, tab_ticker, tab_detail) = st.tabs(
+     tab_insider, tab_ticker, tab_detail, tab_backtest) = st.tabs(
         ["Top funds", "Universe", "Results", "Holdings", "Moves", "13D filings",
-         "Insider buys", "Ticker lookup", "Fund detail"]
+         "Insider buys", "Ticker lookup", "Fund detail", "Backtest"]
     )
+
+    with tab_backtest:
+        _render_backtest_tab()
 
     with tab_top:
         st.subheader("Top hedge funds by annualized return")

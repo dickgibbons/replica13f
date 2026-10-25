@@ -195,7 +195,8 @@ def filing_parties(cik: str, accession: str) -> dict:
 
 
 def list_13f_filings(cik: str):
-    """Return [{period, filing_date, accession, form}] for all 13F-HR / 13F-HR/A."""
+    """Return [{period, filing_date, accepted, accession, form}] for all
+    13F-HR / 13F-HR/A. `accepted` is EDGAR's acceptanceDateTime (UTC)."""
     cik = str(cik).zfill(10)
     data = _get(f"https://data.sec.gov/submissions/CIK{cik}.json", as_json=True)
     out = []
@@ -206,15 +207,51 @@ def list_13f_filings(cik: str):
         ej = _get(f"https://data.sec.gov/submissions/{extra['name']}", as_json=True)
         blocks.append(ej)
     for b in blocks:
-        for form, fdate, pdate, acc in zip(
-            b["form"], b["filingDate"], b["reportDate"], b["accessionNumber"]
+        accepted = b.get("acceptanceDateTime") or [None] * len(b["form"])
+        for form, fdate, pdate, acc, acc_dt in zip(
+            b["form"], b["filingDate"], b["reportDate"], b["accessionNumber"],
+            accepted,
         ):
             if form in ("13F-HR", "13F-HR/A"):
                 out.append({
-                    "period": pdate, "filing_date": fdate,
+                    "period": pdate, "filing_date": fdate, "accepted": acc_dt,
                     "accession": acc, "form": form,
                 })
     return out
+
+
+AMENDMENT_TYPES_CACHE = os.path.join(CACHE, "amendment_types.json")
+
+
+def amendment_type(cik: str, accession: str) -> str | None:
+    """'RESTATEMENT' or 'NEW HOLDINGS' for a 13F-HR/A (cached on disk).
+
+    A NEW HOLDINGS amendment lists only positions added to the original
+    report, so it must be merged into the original, not replace it."""
+    os.makedirs(CACHE, exist_ok=True)
+    cache = {}
+    if os.path.exists(AMENDMENT_TYPES_CACHE):
+        with open(AMENDMENT_TYPES_CACHE) as f:
+            cache = json.load(f)
+    if accession in cache:
+        return cache[accession]
+    acc = accession.replace("-", "")
+    idx = _get(
+        f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/index.json",
+        as_json=True,
+    )
+    names = [it["name"] for it in idx["directory"]["item"]]
+    primary = next((n for n in names if n.lower() == "primary_doc.xml"), None)
+    kind = None
+    if primary:
+        raw = _get(f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{primary}")
+        m = re.search(r"<(?:\w+:)?amendmentType>\s*([^<]+?)\s*<", raw)
+        if m:
+            kind = m.group(1).strip().upper()
+    cache[accession] = kind
+    with open(AMENDMENT_TYPES_CACHE, "w") as f:
+        json.dump(cache, f)
+    return kind
 
 def _infotable_url(cik: str, accession: str):
     acc = accession.replace("-", "")
@@ -286,42 +323,73 @@ def parse_infotable(cik: str, accession: str, filing_date: str,
         })
     return rows
 
+def _collapse_cusips(rows: list[dict]) -> dict[str, dict]:
+    """Sum value and shares across duplicate CUSIP lines (share classes,
+    multiple managers on one report)."""
+    agg: dict[str, dict] = {}
+    for row in rows:
+        k = row["cusip"]
+        if k in agg:
+            agg[k]["value_usd"] += row["value_usd"]
+            if row.get("shares") is not None:
+                agg[k]["shares"] = (agg[k].get("shares") or 0.0) + row["shares"]
+        else:
+            agg[k] = dict(row)
+    return agg
+
+
+def _period_filings(filings: list[dict], cik: str) -> list[dict]:
+    """Filings that make up one period's report, oldest first: the latest
+    full report (original or restatement) plus any later NEW HOLDINGS
+    amendments, which add positions to it."""
+    filings = sorted(filings, key=lambda f: (f["filing_date"], f["accession"]))
+    base_idx = 0
+    for i, f in enumerate(filings):
+        if f["form"] == "13F-HR":
+            base_idx = i
+        elif amendment_type(cik, f["accession"]) != "NEW HOLDINGS":
+            base_idx = i
+    return [filings[base_idx]] + [
+        f for f in filings[base_idx + 1:]
+        if f["form"] == "13F-HR/A"
+        and amendment_type(cik, f["accession"]) == "NEW HOLDINGS"
+    ]
+
+
 def holdings_by_period(cik: str, cache=True, max_periods=None):
-    """Latest-amendment holdings per period.
-    Returns {period(str): {"filing_date": str, "holdings": [...]}}.
+    """Holdings per period, with amendments applied.
+
+    Returns {period(str): {"filing_date", "accepted", "form", "holdings"}}.
+    filing_date/accepted are those of the full report the holdings come
+    from, i.e. when the bulk of the information became public.
     max_periods limits to the most recent N periods (cuts EDGAR calls for
     trailing-window runs)."""
     tag = f"_last{max_periods}" if max_periods else ""
-    cpath = os.path.join(CACHE, f"holdings_{str(cik).zfill(10)}{tag}.json")
+    cpath = os.path.join(CACHE, f"holdings_v2_{str(cik).zfill(10)}{tag}.json")
     if cache and os.path.exists(cpath):
         with open(cpath) as f:
             return json.load(f)
-    filings = list_13f_filings(cik)
-    # keep the latest-filed filing for each period (amendments supersede)
-    best = {}
-    for f in filings:
-        p = f["period"]
-        if p not in best or f["filing_date"] > best[p]["filing_date"]:
-            best[p] = f
-    keep = sorted(best)
+    by_period: dict[str, list[dict]] = {}
+    for f in list_13f_filings(cik):
+        by_period.setdefault(f["period"], []).append(f)
+    keep = sorted(by_period)
     if max_periods:
         keep = keep[-max_periods:]
-    best = {p: best[p] for p in keep}
     result = {}
-    for p, f in sorted(best.items()):
-        h = parse_infotable(cik, f["accession"], f["filing_date"])
-        # collapse multiple share classes of same CUSIP (rare) by summing value
-        agg = {}
-        for row in h:
-            k = row["cusip"]
-            if k in agg:
-                agg[k]["value_usd"] += row["value_usd"]
-            else:
-                agg[k] = row
-        result[p] = {"filing_date": f["filing_date"],
-                     "form": f["form"],
+    for p in keep:
+        parts = _period_filings(by_period[p], cik)
+        agg: dict[str, dict] = {}
+        for f in parts:
+            rows = _collapse_cusips(
+                parse_infotable(cik, f["accession"], f["filing_date"]))
+            agg.update(rows)
+        base = parts[0]
+        result[p] = {"filing_date": base["filing_date"],
+                     "accepted": base.get("accepted"),
+                     "form": base["form"],
                      "holdings": list(agg.values())}
     if cache:
+        os.makedirs(CACHE, exist_ok=True)
         with open(cpath, "w") as fh:
             json.dump(result, fh)
     return result
